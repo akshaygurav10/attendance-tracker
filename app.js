@@ -236,6 +236,14 @@ class AttendanceData {
                     localStorage.setItem('attendance_admin_list', JSON.stringify(admins));
                 }
             });
+
+            // Sync visibility setting
+            database.ref('settings/everyoneSeesAll').on('value', (snapshot) => {
+                const val = snapshot.val();
+                const toggle = document.getElementById('toggleVisibility');
+                if (toggle) toggle.checked = val === true;
+                if (this.onDataLoaded) this.onDataLoaded();
+            });
         }
     }
 
@@ -507,57 +515,68 @@ class App {
             this.updateUIPermissions();
             return;
         }
-        // Show login modal
-        this.populateLoginDropdown();
+        // Show login modal and fill remembered credentials
+        const rememberedUser = localStorage.getItem('attendance_remembered_user');
+        const rememberedPass = localStorage.getItem('attendance_remembered_pass');
+        if (rememberedUser) {
+            document.getElementById('loginUsername').value = rememberedUser;
+            if (rememberedPass) {
+                document.getElementById('loginPassword').value = rememberedPass;
+                document.getElementById('rememberMe').checked = true;
+            }
+        }
     }
 
     populateLoginDropdown() {
-        const select = document.getElementById('loginUsername');
-        if (!select) return;
-        select.innerHTML = '<option value="">-- Select your name --</option>';
-        // Always show super admin in the list
-        const allUsers = [...TEAM_MEMBERS];
-        if (!allUsers.includes(SUPER_ADMIN)) {
-            allUsers.unshift(SUPER_ADMIN);
-        }
-        // Filter nulls
-        const filteredUsers = allUsers.filter(m => m && m.trim() !== '');
-
-        // Fix 5: Show username alongside full name in dropdown
-        if (typeof database !== 'undefined') {
-            database.ref('users').once('value').then((snapshot) => {
-                const users = snapshot.val() || {};
-                filteredUsers.forEach(member => {
-                    const sanitizedName = member.replace(/\./g, '___DOT___');
-                    const userData = users[sanitizedName];
-                    const uname = userData && userData.username ? userData.username : '';
-                    const displayText = uname ? `${uname} (${member})` : member;
-                    select.innerHTML += `<option value="${member}">${displayText}</option>`;
-                });
-            });
-        } else {
-            filteredUsers.forEach(member => {
-                select.innerHTML += `<option value="${member}">${member}</option>`;
-            });
-        }
+        // No dropdown anymore — just clear the input
+        const input = document.getElementById('loginUsername');
+        if (input) input.value = '';
     }
 
     async handleLogin() {
-        const username = document.getElementById('loginUsername').value;
+        const usernameInput = document.getElementById('loginUsername').value.trim();
         const password = document.getElementById('loginPassword').value;
         const errorEl = document.getElementById('loginError');
 
-        if (!username) { errorEl.textContent = 'Please select your name.'; return; }
+        if (!usernameInput) { errorEl.textContent = 'Please enter your username.'; return; }
         if (!password) { errorEl.textContent = 'Please enter your password.'; return; }
 
         const hash = await hashPassword(password);
 
         if (typeof database !== 'undefined') {
-            const sanitizedName = username.replace(/\./g, '___DOT___');
             try {
-                // Check if terminated
-                const userSnapshot = await database.ref('users/' + sanitizedName).once('value');
-                const userData = userSnapshot.val();
+                // Look up user by username or full name
+                const usersSnapshot = await database.ref('users').once('value');
+                const users = usersSnapshot.val() || {};
+                let matchedUser = null;
+                let sanitizedName = null;
+                let userData = null;
+
+                for (const key in users) {
+                    const u = users[key];
+                    const uname = u.username || '';
+                    const fullName = u.name || key.replace(/___DOT___/g, '.');
+                    // Match by username or full name (case insensitive)
+                    if (uname.toLowerCase() === usernameInput.toLowerCase() ||
+                        fullName.toLowerCase() === usernameInput.toLowerCase()) {
+                        matchedUser = fullName;
+                        sanitizedName = key;
+                        userData = u;
+                        break;
+                    }
+                }
+
+                // Special case: super admin first login (no user record exists yet)
+                if (!matchedUser && (usernameInput.toLowerCase() === SUPER_ADMIN.toLowerCase() || usernameInput.toLowerCase() === generateUsername(SUPER_ADMIN))) {
+                    matchedUser = SUPER_ADMIN;
+                    sanitizedName = SUPER_ADMIN.replace(/\./g, '___DOT___');
+                    userData = null;
+                }
+
+                if (!matchedUser) {
+                    errorEl.textContent = 'Username not found. Check spelling or register.';
+                    return;
+                }
 
                 if (userData && userData.terminated === true) {
                     errorEl.textContent = 'Your account has been terminated. Contact admin.';
@@ -567,11 +586,11 @@ class App {
                 const storedHash = userData ? userData.passwordHash : null;
 
                 if (!storedHash) {
-                    // Super admin first-time: auto-register with this password
-                    if (username === SUPER_ADMIN) {
-                        const uname = await generateUniqueUsername(username);
+                    // Super admin first-time setup
+                    if (matchedUser === SUPER_ADMIN) {
+                        const uname = await generateUniqueUsername(matchedUser);
                         await database.ref('users/' + sanitizedName).set({
-                            name: username,
+                            name: matchedUser,
                             passwordHash: hash,
                             registeredAt: new Date().toISOString(),
                             isAdmin: true,
@@ -579,9 +598,8 @@ class App {
                             terminated: false,
                             username: uname
                         });
-                        // Add to team members
-                        if (!TEAM_MEMBERS.includes(username)) {
-                            TEAM_MEMBERS.push(username);
+                        if (!TEAM_MEMBERS.includes(matchedUser)) {
+                            TEAM_MEMBERS.push(matchedUser);
                             saveTeamMembers(TEAM_MEMBERS);
                         }
                     } else {
@@ -593,42 +611,56 @@ class App {
                     return;
                 }
 
-                // Fix 1: Check if user must reset password (restored user)
+                // Check if must reset password (restored user)
                 if (userData && userData.mustResetPassword === true) {
-                    errorEl.textContent = 'Please set a new password.';
                     let newPassword = null;
                     while (true) {
-                        newPassword = prompt(`Your account was restored. Please set a new password (min 4 characters):`);
-                        if (newPassword === null) return; // cancelled
+                        newPassword = prompt('Your account was restored. Please set a new password (min 4 characters):');
+                        if (newPassword === null) return;
                         if (newPassword.length >= 4) break;
                         alert('Password must be at least 4 characters. Try again.');
                     }
                     const confirmPassword = prompt('Confirm new password:');
                     if (newPassword !== confirmPassword) {
-                        errorEl.textContent = 'Passwords do not match. Try logging in again.';
+                        errorEl.textContent = 'Passwords do not match. Try again.';
                         return;
                     }
                     const newHash = await hashPassword(newPassword);
                     await database.ref('users/' + sanitizedName + '/passwordHash').set(newHash);
                     await database.ref('users/' + sanitizedName + '/mustResetPassword').remove();
-                    errorEl.textContent = '';
                 }
 
-                // Fix 5: Generate username for existing users who don't have one yet
+                // Generate username for existing users who don't have one
                 if (userData && !userData.username) {
-                    const uname = await generateUniqueUsername(username);
+                    const uname = await generateUniqueUsername(matchedUser);
                     await database.ref('users/' + sanitizedName + '/username').set(uname);
                 }
+
+                // Use full name as the stored current user
+                var username = matchedUser;
             } catch (error) {
                 errorEl.textContent = 'Connection error. Please try again.';
                 return;
             }
+        } else {
+            var username = usernameInput;
         }
 
         // Login successful
         errorEl.textContent = '';
         localStorage.setItem('attendance_current_user', username);
         this.selectedMember = username;
+
+        // Remember me
+        const rememberMe = document.getElementById('rememberMe');
+        if (rememberMe && rememberMe.checked) {
+            localStorage.setItem('attendance_remembered_user', usernameInput);
+            localStorage.setItem('attendance_remembered_pass', password);
+        } else {
+            localStorage.removeItem('attendance_remembered_user');
+            localStorage.removeItem('attendance_remembered_pass');
+        }
+
         // Ensure user is in team members list
         if (!TEAM_MEMBERS.includes(username)) {
             TEAM_MEMBERS.push(username);
@@ -699,18 +731,11 @@ class App {
             alert('Only admins can reset passwords.');
             return;
         }
-        // Fix 6: Loop until valid password entered or cancelled
-        let newPassword = null;
-        while (true) {
-            newPassword = prompt(`Set new password for "${member}" (min 4 characters):`);
-            if (newPassword === null) return; // cancelled
-            if (newPassword.length >= 4) break;
-            alert('Password must be at least 4 characters. Try again.');
-        }
-        const hash = await hashPassword(newPassword);
+        const defaultPassword = 'Temp@123';
+        const hash = await hashPassword(defaultPassword);
         const sanitizedName = member.replace(/\./g, '___DOT___');
         await database.ref('users/' + sanitizedName + '/passwordHash').set(hash);
-        alert(`Password reset for ${member}.`);
+        alert(`Password reset for "${member}" as "Temp@123"`);
     }
 
     updateUserDisplay() {
@@ -718,16 +743,27 @@ class App {
         const display = document.getElementById('currentUserDisplay');
         if (user) {
             const badge = isAdmin() ? ' 👑' : '';
-            // Fix 5: Show username instead of full name
             const sanitizedName = user.replace(/\./g, '___DOT___');
             if (typeof database !== 'undefined') {
                 database.ref('users/' + sanitizedName + '/username').once('value').then((snapshot) => {
                     const uname = snapshot.val() || user;
-                    display.innerHTML = `<span class="logged-in-label">Logged in:</span> ${uname}${badge} <span class="switch-user-btn" id="btnChangePassword">🔑</span> <span class="switch-user-btn" id="btnLogout">⇄ Logout</span>`;
+                    display.innerHTML = `
+                        <span class="user-display-name">${uname}${badge}</span>
+                        <span class="user-display-sep">|</span>
+                        <span class="user-display-btn" id="btnChangePassword" title="Change password">🔑 Password</span>
+                        <span class="user-display-sep">|</span>
+                        <span class="user-display-btn" id="btnLogout" title="Logout">⇄ Logout</span>
+                    `;
                     this.bindUserDisplayEvents(display);
                 });
             } else {
-                display.innerHTML = `<span class="logged-in-label">Logged in:</span> ${user}${badge} <span class="switch-user-btn" id="btnChangePassword">🔑</span> <span class="switch-user-btn" id="btnLogout">⇄ Logout</span>`;
+                display.innerHTML = `
+                    <span class="user-display-name">${user}${badge}</span>
+                    <span class="user-display-sep">|</span>
+                    <span class="user-display-btn" id="btnChangePassword" title="Change password">🔑 Password</span>
+                    <span class="user-display-sep">|</span>
+                    <span class="user-display-btn" id="btnLogout" title="Logout">⇄ Logout</span>
+                `;
                 this.bindUserDisplayEvents(display);
             }
         } else {
@@ -763,6 +799,39 @@ class App {
         if (syncBtn) syncBtn.style.display = admin ? '' : 'none';
         const reportBtn = document.getElementById('btnEmailReport');
         if (reportBtn) reportBtn.style.display = admin ? '' : 'none';
+        const adminSettings = document.getElementById('adminSettings');
+        if (adminSettings) adminSettings.style.display = admin ? 'block' : 'none';
+
+        // Summary visibility depends on toggle for non-admin
+        const summaryBtn = document.getElementById('btnSummaryView');
+        if (summaryBtn) {
+            if (admin) {
+                summaryBtn.style.display = 'block';
+            } else {
+                const toggle = document.getElementById('toggleVisibility');
+                summaryBtn.style.display = (toggle && toggle.checked) ? 'block' : 'none';
+            }
+        }
+
+        // Load visibility toggle state from Firebase
+        if (typeof database !== 'undefined') {
+            database.ref('settings/everyoneSeesAll').once('value').then((snapshot) => {
+                const val = snapshot.val();
+                const toggle = document.getElementById('toggleVisibility');
+                if (toggle) toggle.checked = val === true;
+                // Update summary visibility after loading setting
+                if (summaryBtn && !admin) {
+                    summaryBtn.style.display = val === true ? 'block' : 'none';
+                }
+            });
+        }
+    }
+
+    getDataVisibility() {
+        // Check if everyone can see everyone's data
+        const toggle = document.getElementById('toggleVisibility');
+        if (toggle) return toggle.checked;
+        return false;
     }
 
     async changeOwnPassword() {
@@ -805,13 +874,28 @@ class App {
     renderTeamList() {
         const list = document.getElementById('teamList');
         const currentUser = getCurrentUser();
-        // Put logged-in user on top
-        let orderedMembers = [...TEAM_MEMBERS];
-        if (currentUser && orderedMembers.includes(currentUser)) {
-            orderedMembers = orderedMembers.filter(m => m !== currentUser);
-            orderedMembers.unshift(currentUser);
+        const admin = isAdmin();
+
+        // Determine which members to show
+        let visibleMembers = [...TEAM_MEMBERS];
+
+        // If not admin, check visibility setting
+        if (!admin) {
+            const toggle = document.getElementById('toggleVisibility');
+            const everyoneSeesAll = toggle && toggle.checked;
+            if (!everyoneSeesAll) {
+                // Only show logged-in user
+                visibleMembers = visibleMembers.filter(m => m === currentUser);
+            }
         }
-        list.innerHTML = orderedMembers.map((member, i) => {
+
+        // Put logged-in user on top
+        if (currentUser && visibleMembers.includes(currentUser)) {
+            visibleMembers = visibleMembers.filter(m => m !== currentUser);
+            visibleMembers.unshift(currentUser);
+        }
+
+        list.innerHTML = visibleMembers.map((member, i) => {
             const initials = member.split(' ').map(n => n[0]).join('').substring(0, 2);
             const isActive = member === this.selectedMember ? 'active' : '';
             const isMe = member === currentUser ? '<span class="me-tag">(You)</span>' : '';
@@ -857,8 +941,18 @@ class App {
         const attended = this.data.getAttendanceCount(this.selectedMember, this.currentYear, this.currentMonth);
         const percentage = this.data.getAttendancePercentage(this.selectedMember, this.currentYear, this.currentMonth);
         const required = Math.ceil(workingDays * REQUIRED_PERCENTAGE / 100);
+        const needToAttend = Math.max(0, required - attended);
 
         const statusColor = percentage >= REQUIRED_PERCENTAGE ? 'green' : (percentage >= 40 ? 'orange' : 'red');
+
+        const wfhMessages = [
+            "Enjoy your work-from-home days—they're a blessing for both your family and your health. ❤️🏡💻",
+            "Work from home while it lasts. More family time, better health, and a happier life. 🏡❤️",
+            "Enjoy your work-from-home time—it brings you closer to your family and gives you a better work-life balance. 🏡❤️"
+        ];
+        const motivationMsg = percentage >= REQUIRED_PERCENTAGE
+            ? `<div class="motivation-msg">${wfhMessages[Math.floor(Math.random() * wfhMessages.length)]}</div>`
+            : '';
 
         document.getElementById('attendanceStats').innerHTML = `
             <div class="stat-card">
@@ -870,6 +964,10 @@ class App {
                 <span class="stat-value green">${attended}</span>
             </div>
             <div class="stat-card">
+                <span class="stat-label">Need to Attend</span>
+                <span class="stat-value ${needToAttend === 0 ? 'green' : 'red'}">${needToAttend}</span>
+            </div>
+            <div class="stat-card">
                 <span class="stat-label">Required (60%)</span>
                 <span class="stat-value orange">${required}</span>
             </div>
@@ -877,6 +975,7 @@ class App {
                 <span class="stat-label">Attendance %</span>
                 <span class="stat-value ${statusColor}">${percentage}%</span>
             </div>
+            ${motivationMsg}
         `;
     }
 
@@ -2012,6 +2111,14 @@ ${m.percentage}%
 
         // Theme toggle
         document.getElementById('btnThemeToggle').addEventListener('click', () => this.toggleTheme());
+
+        // Visibility toggle (admin only)
+        document.getElementById('toggleVisibility').addEventListener('change', (e) => {
+            if (typeof database !== 'undefined') {
+                database.ref('settings/everyoneSeesAll').set(e.target.checked);
+            }
+            this.renderTeamList();
+        });
 
         // View switching
         document.getElementById('btnCalendarView').addEventListener('click', () => this.switchView('calendar'));

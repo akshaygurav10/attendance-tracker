@@ -223,8 +223,10 @@ body {
 .view-header {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 16px;
     margin-bottom: 20px;
+    position: relative;
 }
 
 .view-header h2 {
@@ -255,6 +257,7 @@ body {
     gap: 16px;
     margin-bottom: 20px;
     flex-wrap: wrap;
+    justify-content: center;
 }
 
 .stat-card {
@@ -290,6 +293,7 @@ body {
     grid-template-columns: repeat(7, 1fr);
     gap: 4px;
     max-width: 800px;
+    margin: 0 auto;
 }
 
 .calendar-header {
@@ -1415,12 +1419,35 @@ body.light-theme .calendar-day.wfh-email {
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
     border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .current-user:hover {
     border-color: var(--accent-blue);
+}
+
+.user-display-name {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.user-display-sep {
+    color: var(--border-color);
+    font-size: 12px;
+}
+
+.user-display-btn {
+    color: var(--accent-blue-light);
+    cursor: pointer;
+    font-size: 12px;
+    transition: color 0.2s;
+}
+
+.user-display-btn:hover {
+    color: white;
+    text-decoration: underline;
 }
 
 .modal-user {
@@ -1551,7 +1578,8 @@ body.light-theme .calendar-day.wfh-email {
 }
 
 .viewing-info {
-    margin-left: auto;
+    position: absolute;
+    right: 0;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -1591,11 +1619,6 @@ body.light-theme .calendar-day.wfh-email {
     font-size: 10px;
     color: var(--accent-blue-light);
     margin-left: 4px;
-    opacity: 0.7;
-}
-
-.current-user:hover .switch-user-btn {
-    opacity: 1;
 }
 
 
@@ -1744,4 +1767,67 @@ select.auth-input {
     cursor: pointer;
     font-size: 16px;
     user-select: none;
+}
+
+
+/* Remember me checkbox */
+.remember-field {
+    margin-bottom: 8px !important;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+/* Admin settings toggle */
+.admin-settings {
+    margin-bottom: 16px;
+    padding: 12px 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+}
+
+.toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.toggle-label input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.toggle-text {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+
+/* Motivation message */
+.motivation-msg {
+    width: 100%;
+    padding: 8px 0;
+    color: var(--text-primary);
+    font-size: 16px;
+    font-weight: 600;
+    text-align: center;
+    margin-top: 4px;
 }

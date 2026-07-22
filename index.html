@@ -118,6 +118,12 @@
                         <input type="text" id="memberName" placeholder="Enter full name (e.g., John Doe)">
                         <button class="btn-primary" id="btnAddMember" onclick="document.dispatchEvent(new CustomEvent('addMemberClick'))">+ Add Member</button>
                     </div>
+                    <div class="admin-settings" id="adminSettings" style="display:none;">
+                        <label class="toggle-label">
+                            <input type="checkbox" id="toggleVisibility">
+                            <span class="toggle-text">Everyone sees everyone's data</span>
+                        </label>
+                    </div>
                     <p class="drag-hint">💡 Drag members up/down to reorder the list</p>
                     <div class="team-member-list" id="teamMemberList"></div>
                     <div class="team-info">
@@ -196,10 +202,8 @@
                 <!-- Login Form -->
                 <div id="loginForm">
                     <div class="auth-field">
-                        <label>Username (Full Name)</label>
-                        <select id="loginUsername" class="auth-input">
-                            <option value="">-- Select your name --</option>
-                        </select>
+                        <label>Username</label>
+                        <input type="text" id="loginUsername" class="auth-input" placeholder="Enter your username (e.g., agurav)">
                     </div>
                     <div class="auth-field">
                         <label>Password</label>
@@ -207,6 +211,11 @@
                             <input type="password" id="loginPassword" class="auth-input" placeholder="Enter your password">
                             <span class="toggle-password" id="toggleLoginPw">👁️</span>
                         </div>
+                    </div>
+                    <div class="auth-field remember-field">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="rememberMe"> Remember me
+                        </label>
                     </div>
                     <button class="btn-primary auth-btn" id="btnLogin">Login</button>
                     <p class="auth-switch">New user? <a href="#" id="showRegister">Register here</a></p>
