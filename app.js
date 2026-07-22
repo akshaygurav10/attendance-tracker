@@ -56,7 +56,10 @@ const SUPER_ADMIN = "Akshay Gurav"; // Cannot be removed as admin
 function getAdminList() {
     const saved = localStorage.getItem('attendance_admin_list');
     if (saved) {
-        return JSON.parse(saved);
+        const list = JSON.parse(saved);
+        // Always ensure super admin is in the list
+        if (!list.includes(SUPER_ADMIN)) list.push(SUPER_ADMIN);
+        return list;
     }
     return [SUPER_ADMIN];
 }
@@ -83,10 +86,13 @@ function isAdmin() {
 }
 
 function canEdit(member) {
-    const currentUser = getCurrentUser();
+    const currentUser = localStorage.getItem('attendance_current_user');
     if (!currentUser) return false;
-    if (ADMIN_MEMBERS.includes(currentUser)) return true;
-    return currentUser === member;
+    // Admin can edit anyone
+    const admins = getAdminList();
+    if (admins.indexOf(currentUser) !== -1) return true;
+    // Regular user can only edit their own
+    return currentUser.trim() === member.trim();
 }
 
 // ==========================================
@@ -389,17 +395,19 @@ class App {
     showUserSelection() {
         const currentUser = getCurrentUser();
         if (currentUser && TEAM_MEMBERS.includes(currentUser)) {
-            // User already selected
+            // User already identified — open their calendar by default
             document.getElementById('userModal').classList.remove('active');
+            this.selectedMember = currentUser;
             this.updateUserDisplay();
             return;
         }
-        // Show selection modal
+        // Show selection modal (first time only)
         this.renderUserSelectList();
     }
 
     renderUserSelectList() {
         const list = document.getElementById('userSelectList');
+
         list.innerHTML = TEAM_MEMBERS.map((member, i) => {
             const initials = member.split(' ').map(n => n[0]).join('').substring(0, 2);
             const isAdminMember = ADMIN_MEMBERS.includes(member);
@@ -409,27 +417,22 @@ class App {
                 ${isAdminMember ? '<span class="admin-badge">Admin</span>' : ''}
             </div>`;
         }).join('');
+    }
 
-        // Bind clicks
-        list.querySelectorAll('.user-select-item').forEach(item => {
-            item.addEventListener('click', () => {
-                const user = item.dataset.user;
-                setCurrentUser(user);
-                this.selectedMember = user;
-                document.getElementById('userModal').classList.remove('active');
-                this.updateUserDisplay();
-                this.renderTeamList();
-                this.renderCalendar();
-            });
-        });
+    getAdminPassword(member) {
+        // Password format: Open@ + first letter of first name + first letter of last name (uppercase)
+        const parts = member.split(' ');
+        const firstInitial = parts[0] ? parts[0][0].toUpperCase() : '';
+        const lastInitial = parts[1] ? parts[1][0].toUpperCase() : '';
+        return `Open@${firstInitial}${lastInitial}`;
     }
 
     updateUserDisplay() {
         const user = getCurrentUser();
         const display = document.getElementById('currentUserDisplay');
         if (user) {
-            const badge = isAdmin() ? ' (Admin)' : '';
-            display.textContent = `👤 ${user}${badge}`;
+            const badge = isAdmin() ? ' 👑' : '';
+            display.innerHTML = `<span class="logged-in-label">Logged in:</span> ${user}${badge}`;
             display.style.cursor = 'pointer';
             display.onclick = () => {
                 document.getElementById('userModal').classList.add('active');
@@ -459,8 +462,23 @@ class App {
         document.getElementById('currentMonthYear').textContent =
             `${monthNames[this.currentMonth]} ${this.currentYear}`;
 
+        this.renderViewingInfo();
         this.renderStats();
         this.renderCalendarGrid();
+    }
+
+    renderViewingInfo() {
+        const currentUser = localStorage.getItem('attendance_current_user');
+        const viewing = this.selectedMember;
+        const info = document.getElementById('viewingInfo');
+        const admins = getAdminList();
+        const hasPermission = currentUser && ((admins.indexOf(currentUser) !== -1) || (currentUser.trim() === viewing.trim()));
+
+        if (!hasPermission && currentUser) {
+            info.innerHTML = `<span class="view-only-tag">👁️ View Only</span> <span class="viewing-member">Viewing: ${viewing}</span>`;
+        } else {
+            info.innerHTML = `<span class="viewing-member">📝 Editing: ${viewing}</span>`;
+        }
     }
 
     renderStats() {
@@ -870,7 +888,8 @@ class App {
     makeAdmin(member) {
         if (!isAdmin()) return;
         if (ADMIN_MEMBERS.includes(member)) return;
-        if (!confirm(`Make "${member}" an admin?\n\nAdmins can edit everyone's attendance and manage the team.`)) return;
+        const password = this.getAdminPassword(member);
+        if (!confirm(`Make "${member}" an admin?\n\nAdmins can edit everyone's attendance and manage the team.\n\nTheir password will be: ${password}`)) return;
         ADMIN_MEMBERS.push(member);
         saveAdminList(ADMIN_MEMBERS);
         this.renderTeamManagement();
@@ -1325,6 +1344,60 @@ ${m.percentage}%
 
     // --- Event Bindings ---
     bindEvents() {
+        // User selection via event delegation
+        document.getElementById('userSelectList').addEventListener('click', (e) => {
+            const item = e.target.closest('.user-select-item');
+            if (!item) return;
+            const user = item.dataset.user;
+            if (!user) return;
+            // Only admin users need password
+            if (ADMIN_MEMBERS.includes(user)) {
+                const password = prompt(`Enter admin password for ${user}:`);
+                const expectedPassword = this.getAdminPassword(user);
+                if (password !== expectedPassword) {
+                    alert('❌ Incorrect password.');
+                    return;
+                }
+            }
+            // Set current user in localStorage
+            localStorage.setItem('attendance_current_user', user);
+            // Update app state
+            this.selectedMember = user;
+            // Close modal
+            document.getElementById('userModal').classList.remove('active');
+            // Refresh UI
+            this.updateUserDisplay();
+            this.renderTeamList();
+            this.renderCalendar();
+        });
+
+        // Close user modal with escape or close button
+        document.getElementById('userModal').addEventListener('click', (e) => {
+            if (e.target.id === 'userModal' || e.target.classList.contains('btn-close-user')) {
+                // Only allow close if user is already logged in
+                if (getCurrentUser()) {
+                    document.getElementById('userModal').classList.remove('active');
+                }
+            }
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                if (document.getElementById('userModal').classList.contains('active') && getCurrentUser()) {
+                    document.getElementById('userModal').classList.remove('active');
+                }
+                if (document.getElementById('syncModal').classList.contains('active')) {
+                    document.getElementById('syncModal').classList.remove('active');
+                }
+                if (document.getElementById('emailModal').classList.contains('active')) {
+                    document.getElementById('emailModal').classList.remove('active');
+                }
+                // Close context menu
+                const menu = document.getElementById('dayContextMenu');
+                if (menu) menu.remove();
+            }
+        });
+
         // Team member selection - always switch to calendar view
         document.getElementById('teamList').addEventListener('click', (e) => {
             const li = e.target.closest('li');
@@ -1342,17 +1415,21 @@ ${m.percentage}%
                 !dayEl.classList.contains('weekend') &&
                 !dayEl.classList.contains('holiday') &&
                 !dayEl.classList.contains('future')) {
-                if (!canEdit(this.selectedMember)) {
-                    alert(`⚠️ You can only edit your own attendance.\n\nYou are logged in as: ${getCurrentUser()}`);
-                    return;
+                const currentUser = localStorage.getItem('attendance_current_user');
+                const viewing = this.selectedMember;
+                if (!currentUser) return;
+                const admins = getAdminList();
+                const hasPermission = (admins.indexOf(currentUser) !== -1) || (currentUser.trim() === viewing.trim());
+                if (!hasPermission) {
+                    return; // Silently block
                 }
                 const date = dayEl.dataset.date;
-                const leaveType = this.data.getLeaveType(this.selectedMember, date);
+                const leaveType = this.data.getLeaveType(viewing, date);
                 if (leaveType) {
                     this.showDayMenu(date, dayEl);
                 } else {
-                    const isPresent = this.data.isPresent(this.selectedMember, date);
-                    this.data.markAttendance(this.selectedMember, date, !isPresent);
+                    const isPresent = this.data.isPresent(viewing, date);
+                    this.data.markAttendance(viewing, date, !isPresent);
                     this.renderCalendar();
                 }
             }
@@ -1366,8 +1443,12 @@ ${m.percentage}%
                 !dayEl.classList.contains('holiday') &&
                 !dayEl.classList.contains('future')) {
                 e.preventDefault();
-                if (!canEdit(this.selectedMember)) {
-                    alert(`⚠️ You can only edit your own attendance.\n\nYou are logged in as: ${getCurrentUser()}`);
+                const currentUser = localStorage.getItem('attendance_current_user');
+                const viewing = this.selectedMember;
+                if (!currentUser) return;
+                const admins = getAdminList();
+                const hasPermission = (admins.indexOf(currentUser) !== -1) || (currentUser.trim() === viewing.trim());
+                if (!hasPermission) {
                     return;
                 }
                 const date = dayEl.dataset.date;
