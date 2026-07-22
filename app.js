@@ -20,7 +20,7 @@ const DEFAULT_TEAM_MEMBERS = [
     "Robinsh Raj"
 ];
 
-// Load team members from localStorage or use defaults
+// Load team members from Firebase or use defaults
 function loadTeamMembers() {
     const saved = localStorage.getItem('attendance_team_members');
     if (saved) {
@@ -31,6 +31,10 @@ function loadTeamMembers() {
 
 function saveTeamMembers(members) {
     localStorage.setItem('attendance_team_members', JSON.stringify(members));
+    // Also save to Firebase
+    if (typeof database !== 'undefined') {
+        database.ref('teamMembers').set(members);
+    }
 }
 
 let TEAM_MEMBERS = loadTeamMembers();
@@ -44,11 +48,14 @@ const AVATAR_COLORS = [
 const REQUIRED_PERCENTAGE = 60;
 
 // ==========================================
-// DATA MANAGEMENT
+// DATA MANAGEMENT (Firebase + localStorage)
 // ==========================================
 
 class AttendanceData {
-    constructor() {
+    constructor(onDataLoaded) {
+        this.onDataLoaded = onDataLoaded;
+        this.data = this.getDefaultData();
+        this.firebaseReady = false;
         this.load();
     }
 
@@ -56,26 +63,71 @@ class AttendanceData {
         return {
             attendance: {},
             holidays: [],
-            leaves: {},       // { member: { date: "leave" | "wfh" | "exception" } }
+            leaves: {},
             lastUpdated: new Date().toISOString()
         };
     }
 
     load() {
-        const saved = localStorage.getItem('attendance_tracker_data');
-        if (saved) {
-            this.data = JSON.parse(saved);
-            // Ensure leaves exists for older data
-            if (!this.data.leaves) this.data.leaves = {};
+        // Try Firebase first
+        if (typeof database !== 'undefined') {
+            database.ref('appData').on('value', (snapshot) => {
+                const firebaseData = snapshot.val();
+                if (firebaseData) {
+                    this.data = firebaseData;
+                    if (!this.data.leaves) this.data.leaves = {};
+                    if (!this.data.holidays) this.data.holidays = [];
+                    if (!this.data.attendance) this.data.attendance = {};
+                } else {
+                    // First time: load from localStorage and push to Firebase
+                    const saved = localStorage.getItem('attendance_tracker_data');
+                    if (saved) {
+                        this.data = JSON.parse(saved);
+                        if (!this.data.leaves) this.data.leaves = {};
+                    } else {
+                        this.data = this.getDefaultData();
+                        this.initDefaultHolidays();
+                    }
+                    this.saveToFirebase();
+                }
+                this.firebaseReady = true;
+                // Also keep localStorage in sync as backup
+                localStorage.setItem('attendance_tracker_data', JSON.stringify(this.data));
+                if (this.onDataLoaded) this.onDataLoaded();
+            });
+
+            // Also sync team members from Firebase
+            database.ref('teamMembers').on('value', (snapshot) => {
+                const members = snapshot.val();
+                if (members && Array.isArray(members)) {
+                    TEAM_MEMBERS = members;
+                    localStorage.setItem('attendance_team_members', JSON.stringify(members));
+                    if (this.onDataLoaded) this.onDataLoaded();
+                }
+            });
         } else {
-            this.data = this.getDefaultData();
-            this.initDefaultHolidays();
+            // Fallback to localStorage
+            const saved = localStorage.getItem('attendance_tracker_data');
+            if (saved) {
+                this.data = JSON.parse(saved);
+                if (!this.data.leaves) this.data.leaves = {};
+            } else {
+                this.data = this.getDefaultData();
+                this.initDefaultHolidays();
+            }
         }
     }
 
     save() {
         this.data.lastUpdated = new Date().toISOString();
         localStorage.setItem('attendance_tracker_data', JSON.stringify(this.data));
+        this.saveToFirebase();
+    }
+
+    saveToFirebase() {
+        if (typeof database !== 'undefined') {
+            database.ref('appData').set(this.data);
+        }
     }
 
     initDefaultHolidays() {
@@ -255,8 +307,6 @@ class AttendanceData {
 
 class App {
     constructor() {
-        this.data = new AttendanceData();
-        this.selectedMember = TEAM_MEMBERS[0];
         this.currentDate = new Date();
         this.currentYear = this.currentDate.getFullYear();
         this.currentMonth = this.currentDate.getMonth();
@@ -264,7 +314,21 @@ class App {
         this.sortColumn = null;
         this.sortDirection = 'asc';
 
+        // Initialize data with callback for when Firebase data loads
+        this.data = new AttendanceData(() => this.onDataUpdate());
+        this.selectedMember = TEAM_MEMBERS[0];
+
         this.init();
+    }
+
+    onDataUpdate() {
+        // Re-render when Firebase sends new data
+        this.selectedMember = this.selectedMember || TEAM_MEMBERS[0];
+        this.renderTeamList();
+        if (this.currentView === 'calendar') this.renderCalendar();
+        else if (this.currentView === 'summary') this.renderSummary();
+        else if (this.currentView === 'holiday') this.renderHolidays();
+        else if (this.currentView === 'team') this.renderTeamManagement();
     }
 
     init() {

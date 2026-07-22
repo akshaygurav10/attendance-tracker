@@ -17,6 +17,7 @@
                         <path d="M7 12h10M12 7v10" stroke="white" stroke-width="2" stroke-linecap="round"/>
                     </svg>
                     <span class="logo-text">Attendance Tracker</span>
+                    <span class="sync-indicator" id="syncIndicator" title="Firebase connection status">●</span>
                 </div>
             </div>
             <div class="nav-right">
@@ -184,6 +185,10 @@
         </div>
     </div>
 
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+    <script src="firebase-config.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

@@ -1358,3 +1358,27 @@ body.light-theme .holiday-item.holiday-current-month {
 .view-header-spacer {
     flex: 1;
 }
+
+
+/* Firebase sync indicator */
+.sync-indicator {
+    font-size: 10px;
+    margin-left: 8px;
+    color: #ff991f;
+    animation: pulse 1.5s infinite;
+}
+
+.sync-indicator.connected {
+    color: #2ea043;
+    animation: none;
+}
+
+.sync-indicator.disconnected {
+    color: #da3633;
+    animation: none;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
