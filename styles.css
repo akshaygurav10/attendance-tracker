@@ -1597,3 +1597,151 @@ body.light-theme .calendar-day.wfh-email {
 .current-user:hover .switch-user-btn {
     opacity: 1;
 }
+
+
+/* Auth forms */
+.auth-field {
+    margin-bottom: 14px;
+}
+
+.auth-field label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.auth-input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+.auth-input:focus {
+    outline: none;
+    border-color: var(--accent-blue);
+}
+
+select.auth-input {
+    cursor: pointer;
+}
+
+.auth-btn {
+    width: 100%;
+    padding: 12px;
+    font-size: 15px;
+    margin-top: 8px;
+}
+
+.auth-switch {
+    text-align: center;
+    margin-top: 12px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.auth-switch a {
+    color: var(--accent-blue-light);
+    text-decoration: none;
+}
+
+.auth-switch a:hover {
+    text-decoration: underline;
+}
+
+.auth-error {
+    color: var(--accent-red);
+    font-size: 12px;
+    text-align: center;
+    margin-top: 8px;
+    min-height: 16px;
+}
+
+/* Reset password button */
+.btn-reset-pw {
+    padding: 4px 8px;
+    background: transparent;
+    color: var(--accent-orange);
+    border: 1px solid var(--accent-orange);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s;
+}
+
+.btn-reset-pw:hover {
+    background: var(--accent-orange);
+    color: white;
+}
+
+
+/* You tag in team list */
+.me-tag {
+    font-size: 10px;
+    color: var(--accent-green);
+    font-weight: 600;
+}
+
+
+/* Terminated users section */
+.terminated-header {
+    margin-top: 24px;
+    margin-bottom: 12px;
+    font-size: 13px;
+    color: var(--accent-red);
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.terminated-item {
+    opacity: 0.6;
+    border-color: var(--accent-red) !important;
+    border-style: dashed !important;
+}
+
+.terminated-name {
+    text-decoration: line-through;
+    color: var(--text-secondary) !important;
+}
+
+.btn-restore {
+    padding: 4px 10px;
+    background: transparent;
+    color: var(--accent-green);
+    border: 1px solid var(--accent-green);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s;
+}
+
+.btn-restore:hover {
+    background: var(--accent-green);
+    color: white;
+}
+
+
+/* Password toggle */
+.password-wrapper {
+    position: relative;
+}
+
+.password-wrapper .auth-input {
+    padding-right: 40px;
+}
+
+.toggle-password {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    cursor: pointer;
+    font-size: 16px;
+    user-select: none;
+}
