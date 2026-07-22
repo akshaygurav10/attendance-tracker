@@ -230,7 +230,7 @@ body {
 .view-header h2 {
     font-size: 20px;
     font-weight: 600;
-    min-width: 200px;
+    min-width: 180px;
     text-align: center;
 }
 
@@ -1367,25 +1367,24 @@ body.light-theme .holiday-item.holiday-current-month {
 
 /* Firebase sync indicator */
 .sync-indicator {
-    font-size: 10px;
-    margin-left: 8px;
+    font-size: 12px;
+    margin-left: 12px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(255, 153, 31, 0.2);
     color: #ff991f;
-    animation: pulse 1.5s infinite;
 }
 
 .sync-indicator.connected {
+    background: rgba(46, 160, 67, 0.2);
     color: #2ea043;
     animation: none;
 }
 
 .sync-indicator.disconnected {
+    background: rgba(218, 54, 51, 0.2);
     color: #da3633;
     animation: none;
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
 }
 
 
@@ -1556,25 +1555,45 @@ body.light-theme .calendar-day.wfh-email {
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-shrink: 0;
 }
 
 .view-only-tag {
     padding: 4px 10px;
-    background: rgba(218, 54, 51, 0.1);
+    background: rgba(218, 54, 51, 0.15);
     border: 1px solid var(--accent-red);
     color: var(--accent-red);
     border-radius: 12px;
     font-size: 11px;
     font-weight: 600;
+    white-space: nowrap;
 }
 
 .viewing-member {
     font-size: 12px;
     color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.viewing-member.editing {
+    color: var(--accent-green);
 }
 
 .logged-in-label {
     font-size: 11px;
     color: var(--text-secondary);
     margin-right: 2px;
+}
+
+
+/* Switch user button */
+.switch-user-btn {
+    font-size: 10px;
+    color: var(--accent-blue-light);
+    margin-left: 4px;
+    opacity: 0.7;
+}
+
+.current-user:hover .switch-user-btn {
+    opacity: 1;
 }

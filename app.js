@@ -117,34 +117,55 @@ class AttendanceData {
     }
 
     load() {
-        // Try Firebase first
+        // Load from localStorage first (immediate)
+        const saved = localStorage.getItem('attendance_tracker_data');
+        if (saved) {
+            this.data = JSON.parse(saved);
+            if (!this.data.leaves) this.data.leaves = {};
+            if (!this.data.holidays) this.data.holidays = [];
+            if (!this.data.attendance) this.data.attendance = {};
+        } else {
+            this.data = this.getDefaultData();
+            this.initDefaultHolidays();
+        }
+
+        // Then sync with Firebase
         if (typeof database !== 'undefined') {
             database.ref('appData').on('value', (snapshot) => {
                 const firebaseData = snapshot.val();
                 if (firebaseData) {
+                    // Decode sanitized keys back to original names
+                    if (firebaseData.attendance) {
+                        const decoded = {};
+                        for (const key in firebaseData.attendance) {
+                            decoded[key.replace(/___DOT___/g, '.')] = firebaseData.attendance[key];
+                        }
+                        firebaseData.attendance = decoded;
+                    }
+                    if (firebaseData.leaves) {
+                        const decoded = {};
+                        for (const key in firebaseData.leaves) {
+                            decoded[key.replace(/___DOT___/g, '.')] = firebaseData.leaves[key];
+                        }
+                        firebaseData.leaves = decoded;
+                    }
                     this.data = firebaseData;
                     if (!this.data.leaves) this.data.leaves = {};
                     if (!this.data.holidays) this.data.holidays = [];
                     if (!this.data.attendance) this.data.attendance = {};
-                } else {
-                    // First time: load from localStorage and push to Firebase
-                    const saved = localStorage.getItem('attendance_tracker_data');
-                    if (saved) {
-                        this.data = JSON.parse(saved);
-                        if (!this.data.leaves) this.data.leaves = {};
-                    } else {
-                        this.data = this.getDefaultData();
-                        this.initDefaultHolidays();
-                    }
+                    // Keep localStorage in sync
+                    localStorage.setItem('attendance_tracker_data', JSON.stringify(this.data));
+                } else if (!this.firebaseReady) {
+                    // First time — push local data to Firebase
                     this.saveToFirebase();
                 }
                 this.firebaseReady = true;
-                // Also keep localStorage in sync as backup
-                localStorage.setItem('attendance_tracker_data', JSON.stringify(this.data));
                 if (this.onDataLoaded) this.onDataLoaded();
+            }, (error) => {
+                console.error('Firebase read failed:', error);
             });
 
-            // Also sync team members from Firebase
+            // Sync team members
             database.ref('teamMembers').on('value', (snapshot) => {
                 const members = snapshot.val();
                 if (members && Array.isArray(members)) {
@@ -154,7 +175,7 @@ class AttendanceData {
                 }
             });
 
-            // Sync admin list from Firebase
+            // Sync admin list
             database.ref('admins').on('value', (snapshot) => {
                 const admins = snapshot.val();
                 if (admins && Array.isArray(admins)) {
@@ -162,16 +183,6 @@ class AttendanceData {
                     localStorage.setItem('attendance_admin_list', JSON.stringify(admins));
                 }
             });
-        } else {
-            // Fallback to localStorage
-            const saved = localStorage.getItem('attendance_tracker_data');
-            if (saved) {
-                this.data = JSON.parse(saved);
-                if (!this.data.leaves) this.data.leaves = {};
-            } else {
-                this.data = this.getDefaultData();
-                this.initDefaultHolidays();
-            }
         }
     }
 
@@ -183,7 +194,43 @@ class AttendanceData {
 
     saveToFirebase() {
         if (typeof database !== 'undefined') {
-            database.ref('appData').set(this.data);
+            // Firebase doesn't allow . $ # [ ] / in keys
+            // Encode member names that contain these characters
+            const sanitized = JSON.parse(JSON.stringify(this.data));
+            
+            // Sanitize attendance keys
+            if (sanitized.attendance) {
+                const cleanAttendance = {};
+                for (const key in sanitized.attendance) {
+                    cleanAttendance[key.replace(/\./g, '___DOT___')] = sanitized.attendance[key];
+                }
+                sanitized.attendance = cleanAttendance;
+            }
+            
+            // Sanitize leaves keys
+            if (sanitized.leaves) {
+                const cleanLeaves = {};
+                for (const key in sanitized.leaves) {
+                    cleanLeaves[key.replace(/\./g, '___DOT___')] = sanitized.leaves[key];
+                }
+                sanitized.leaves = cleanLeaves;
+            }
+
+            const indicator = document.getElementById('syncIndicator');
+            database.ref('appData').set(sanitized).then(() => {
+                if (indicator) {
+                    indicator.textContent = '🟢 Synced';
+                    indicator.className = 'sync-indicator connected';
+                    indicator.style.fontSize = '12px';
+                }
+            }).catch((error) => {
+                console.error('Firebase save failed:', error);
+                if (indicator) {
+                    indicator.textContent = '🔴 ' + error.message;
+                    indicator.className = 'sync-indicator disconnected';
+                    indicator.style.fontSize = '12px';
+                }
+            });
         }
     }
 
@@ -211,6 +258,7 @@ class AttendanceData {
     }
 
     markAttendance(member, date, present) {
+        if (!this.data.attendance) this.data.attendance = {};
         if (!this.data.attendance[member]) {
             this.data.attendance[member] = {};
         }
@@ -218,6 +266,10 @@ class AttendanceData {
             this.data.attendance[member][date] = true;
         } else {
             delete this.data.attendance[member][date];
+            // Clean up empty objects
+            if (Object.keys(this.data.attendance[member]).length === 0) {
+                delete this.data.attendance[member];
+            }
         }
         this.save();
     }
@@ -432,7 +484,7 @@ class App {
         const display = document.getElementById('currentUserDisplay');
         if (user) {
             const badge = isAdmin() ? ' 👑' : '';
-            display.innerHTML = `<span class="logged-in-label">Logged in:</span> ${user}${badge}`;
+            display.innerHTML = `<span class="logged-in-label">Logged in:</span> ${user}${badge} <span class="switch-user-btn">⇄ Switch</span>`;
             display.style.cursor = 'pointer';
             display.onclick = () => {
                 document.getElementById('userModal').classList.add('active');
@@ -471,13 +523,16 @@ class App {
         const currentUser = localStorage.getItem('attendance_current_user');
         const viewing = this.selectedMember;
         const info = document.getElementById('viewingInfo');
-        const admins = getAdminList();
-        const hasPermission = currentUser && ((admins.indexOf(currentUser) !== -1) || (currentUser.trim() === viewing.trim()));
+        if (!info) return;
+        const isAdminUser = currentUser && (ADMIN_MEMBERS.indexOf(currentUser) !== -1 || currentUser === SUPER_ADMIN);
+        const isSelf = currentUser && currentUser === viewing;
 
-        if (!hasPermission && currentUser) {
-            info.innerHTML = `<span class="view-only-tag">👁️ View Only</span> <span class="viewing-member">Viewing: ${viewing}</span>`;
+        if (isSelf) {
+            info.innerHTML = `<span class="viewing-member editing">📝 Editing: ${viewing}</span>`;
+        } else if (isAdminUser) {
+            info.innerHTML = `<span class="viewing-member editing">📝 Admin Editing: ${viewing}</span>`;
         } else {
-            info.innerHTML = `<span class="viewing-member">📝 Editing: ${viewing}</span>`;
+            info.innerHTML = `<span class="view-only-tag">👁️ View Only</span> <span class="viewing-member">Viewing: ${viewing}</span>`;
         }
     }
 
@@ -1418,10 +1473,11 @@ ${m.percentage}%
                 const currentUser = localStorage.getItem('attendance_current_user');
                 const viewing = this.selectedMember;
                 if (!currentUser) return;
-                const admins = getAdminList();
-                const hasPermission = (admins.indexOf(currentUser) !== -1) || (currentUser.trim() === viewing.trim());
-                if (!hasPermission) {
-                    return; // Silently block
+                // Check permission: admin OR own calendar
+                const isAdminUser = ADMIN_MEMBERS.indexOf(currentUser) !== -1 || currentUser === SUPER_ADMIN;
+                const isSelf = currentUser === viewing;
+                if (!isAdminUser && !isSelf) {
+                    return;
                 }
                 const date = dayEl.dataset.date;
                 const leaveType = this.data.getLeaveType(viewing, date);
@@ -1446,9 +1502,9 @@ ${m.percentage}%
                 const currentUser = localStorage.getItem('attendance_current_user');
                 const viewing = this.selectedMember;
                 if (!currentUser) return;
-                const admins = getAdminList();
-                const hasPermission = (admins.indexOf(currentUser) !== -1) || (currentUser.trim() === viewing.trim());
-                if (!hasPermission) {
+                const isAdminUser = ADMIN_MEMBERS.indexOf(currentUser) !== -1 || currentUser === SUPER_ADMIN;
+                const isSelf = currentUser === viewing;
+                if (!isAdminUser && !isSelf) {
                     return;
                 }
                 const date = dayEl.dataset.date;

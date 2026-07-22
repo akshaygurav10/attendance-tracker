@@ -14,19 +14,40 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
-firebase.initializeApp(firebaseConfig);
-const database = firebase.database();
+const app = firebase.initializeApp(firebaseConfig);
+const database = firebase.database(app);
+
+// Test Firebase connection immediately
+database.ref('connectionTest').set({ timestamp: Date.now(), status: 'connected' })
+    .then(() => {
+        const indicator = document.getElementById('syncIndicator');
+        if (indicator) {
+            indicator.textContent = '🟢 Connected';
+            indicator.className = 'sync-indicator connected';
+            indicator.style.fontSize = '12px';
+        }
+    })
+    .catch((error) => {
+        const indicator = document.getElementById('syncIndicator');
+        if (indicator) {
+            indicator.textContent = '🔴 ' + error.message;
+            indicator.className = 'sync-indicator disconnected';
+            indicator.style.fontSize = '12px';
+        }
+    });
 
 // Monitor connection status
 database.ref('.info/connected').on('value', (snapshot) => {
     const indicator = document.getElementById('syncIndicator');
     if (indicator) {
         if (snapshot.val() === true) {
+            indicator.textContent = '🟢 Synced';
             indicator.className = 'sync-indicator connected';
-            indicator.title = 'Connected to cloud - data syncs in real-time';
+            indicator.style.fontSize = '12px';
         } else {
+            indicator.textContent = '🔴 Offline';
             indicator.className = 'sync-indicator disconnected';
-            indicator.title = 'Disconnected - working offline (data saved locally)';
+            indicator.style.fontSize = '12px';
         }
     }
 });
