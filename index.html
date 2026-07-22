@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Team Attendance Tracker</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Top Navigation -->
+        <header class="top-nav">
+            <div class="nav-left">
+                <div class="logo">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                        <rect width="24" height="24" rx="4" fill="#0052CC"/>
+                        <path d="M7 12h10M12 7v10" stroke="white" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    <span class="logo-text">Attendance Tracker</span>
+                </div>
+            </div>
+            <div class="nav-right">
+                <button class="btn-nav btn-theme" id="btnThemeToggle" title="Toggle Light/Dark Theme">🌙 Dark</button>
+                <button class="btn-nav btn-sync" id="btnSyncTeams" title="Sync to Teams">🔄 Sync to Teams</button>
+                <button class="btn-nav" id="btnEmailReport" title="Generate Monthly Dashboard Report">📧 Monthly Report</button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Sidebar -->
+            <aside class="sidebar">
+                <div class="sidebar-section">
+                    <h3>Team Members</h3>
+                    <ul class="team-list" id="teamList"></ul>
+                </div>
+                <div class="sidebar-section">
+                    <h3>Views</h3>
+                    <button class="btn-sidebar active" id="btnCalendarView">📅 Calendar</button>
+                    <button class="btn-sidebar" id="btnSummaryView">📊 Summary</button>
+                    <button class="btn-sidebar" id="btnHolidayView">🏖️ Holidays</button>
+                    <button class="btn-sidebar" id="btnTeamView">👥 Manage Team</button>
+                </div>
+                <div class="sidebar-section">
+                    <h3>Legend</h3>
+                    <div class="legend">
+                        <span class="legend-item"><span class="dot present"></span> Present</span>
+                        <span class="legend-item"><span class="dot wfh"></span> WFH</span>
+                        <span class="legend-item"><span class="dot on-leave"></span> Leave</span>
+                        <span class="legend-item"><span class="dot exception"></span> Exception</span>
+                        <span class="legend-item"><span class="dot weekend"></span> Weekend</span>
+                        <span class="legend-item"><span class="dot holiday"></span> Holiday</span>
+                        <span class="legend-item"><span class="dot today"></span> Today</span>
+                    </div>
+                    <p class="legend-tip">Right-click a day for Leave/WFH/Exception</p>
+                </div>
+            </aside>
+
+            <!-- Content Area -->
+            <main class="content-area">
+                <!-- Calendar View -->
+                <div class="view active" id="calendarView">
+                    <div class="view-header">
+                        <button class="btn-arrow" id="btnPrevMonth">◀</button>
+                        <h2 id="currentMonthYear"></h2>
+                        <button class="btn-arrow" id="btnNextMonth">▶</button>
+                    </div>
+                    <div class="attendance-stats" id="attendanceStats"></div>
+                    <div class="calendar-grid" id="calendarGrid"></div>
+                </div>
+
+                <!-- Summary View -->
+                <div class="view" id="summaryView">
+                    <div class="view-header">
+                        <button class="btn-arrow" id="btnPrevMonthSummary">◀</button>
+                        <h2 id="summaryMonthYear"></h2>
+                        <button class="btn-arrow" id="btnNextMonthSummary">▶</button>
+                        <span class="view-header-spacer"></span>
+                        <button class="btn-reset btn-reset-sort" id="btnResetSort" title="Reset sort to default order">🔄 Reset Order</button>
+                    </div>
+                    <div class="summary-table-container">
+                        <table class="summary-table" id="summaryTable">
+                            <thead>
+                                <tr>
+                                    <th>Team Member</th>
+                                    <th>Days Attended</th>
+                                    <th>Working Days</th>
+                                    <th>Attendance %</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="summaryBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Holiday View -->
+                <div class="view" id="holidayView">
+                    <div class="view-header">
+                        <h2>Manage Holidays</h2>
+                    </div>
+                    <div class="holiday-form">
+                        <input type="date" id="holidayDate">
+                        <input type="text" id="holidayName" placeholder="Holiday name (e.g., Diwali)">
+                        <button class="btn-primary" id="btnAddHoliday">Add Holiday</button>
+                    </div>
+                    <div class="holiday-list" id="holidayList"></div>
+                </div>
+
+                <!-- Team Management View -->
+                <div class="view" id="teamView">
+                    <div class="view-header">
+                        <h2>Manage Team Members</h2>
+                    </div>
+                    <div class="team-form">
+                        <input type="text" id="memberName" placeholder="Enter full name (e.g., John Doe)">
+                        <button class="btn-primary" id="btnAddMember">+ Add Member</button>
+                        <button class="btn-reset" id="btnResetTeam" title="Reset to default team list">🔄 Reset to Default</button>
+                    </div>
+                    <p class="drag-hint">💡 Drag members up/down to reorder the list</p>
+                    <div class="team-member-list" id="teamMemberList"></div>
+                    <div class="team-info">
+                        <strong>💡 Note:</strong> Removing a member will not delete their attendance history. You can re-add them later and their data will still be available.
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- Sync to Teams Modal -->
+    <div class="modal" id="syncModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>🔄 Sync to Teams</h3>
+                <button class="btn-close" id="btnCloseSyncModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="sync-options">
+                    <div class="sync-card" id="syncExport">
+                        <div class="sync-icon">📤</div>
+                        <h4>Share to Team</h4>
+                        <p>Download attendance data as JSON and share it in your Teams channel for others to import.</p>
+                        <button class="btn-primary">Download & Share</button>
+                    </div>
+                    <div class="sync-card" id="syncImport">
+                        <div class="sync-icon">📥</div>
+                        <h4>Import from Team</h4>
+                        <p>Import the latest JSON file shared by your team admin to sync your data.</p>
+                        <button class="btn-primary">Import File</button>
+                    </div>
+                </div>
+                <div class="sync-info">
+                    <strong>💡 How to share in Teams:</strong>
+                    <ol>
+                        <li>Click "Download & Share" to get the JSON file</li>
+                        <li>Go to your Teams channel → Files tab</li>
+                        <li>Upload the downloaded file to the shared folder</li>
+                        <li>Team members can then "Import from Team" using that file</li>
+                    </ol>
+                </div>
+                <div class="sync-status" id="syncStatus"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Monthly Report Modal -->
+    <div class="modal" id="emailModal">
+        <div class="modal-content modal-report">
+            <div class="modal-header">
+                <h3>📊 Monthly Attendance Dashboard</h3>
+                <button class="btn-close" id="btnCloseModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="report-dashboard" id="reportDashboard"></div>
+                <div class="report-actions">
+                    <button class="btn-primary" id="btnCopyReport">📋 Copy Dashboard to Clipboard</button>
+                    <button class="btn-primary" id="btnMailTo">📧 Send Email</button>
+                </div>
+                <div class="report-info" style="margin-top:12px;">
+                    <strong>💡 How it works:</strong><br>
+                    Click "Send Email" → Outlook opens directly with the full HTML dashboard in the email body → Add recipient → Send!
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
