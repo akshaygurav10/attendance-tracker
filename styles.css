@@ -202,7 +202,7 @@ body {
 
 .dot.present { background: var(--accent-green); }
 .dot.weekend { background: var(--weekend-bg); border: 1px solid var(--border-color); }
-.dot.holiday { background: var(--accent-orange); }
+.dot.holiday { background: #2196f3; }
 .dot.today { border: 2px solid var(--today-border); background: transparent; }
 
 /* Content Area */
@@ -342,13 +342,13 @@ body {
 }
 
 .calendar-day.holiday {
-    background: var(--holiday-bg);
+    background: #1a2d3d;
+    border-color: #2196f3;
     cursor: default;
-    border-color: var(--accent-orange);
 }
 
 .calendar-day.holiday .day-number {
-    color: var(--accent-orange);
+    color: #2196f3;
 }
 
 .calendar-day.present {
@@ -1232,19 +1232,19 @@ body.light-theme .team-member-item {
 }
 
 .calendar-day.exception {
-    background: #2d2d1a;
-    border-color: #f39c12;
+    background: #3d3d1a;
+    border-color: #fdd835;
     cursor: pointer;
 }
 
 .calendar-day.exception .day-number {
-    color: #f39c12;
+    color: #fdd835;
 }
 
 /* Legend dots for new types */
 .dot.on-leave { background: #9b59b6; }
 .dot.wfh { background: #00B8D9; }
-.dot.exception { background: #f39c12; }
+.dot.exception { background: #fdd835; }
 
 .legend-tip {
     font-size: 10px;
@@ -1313,9 +1313,14 @@ body.light-theme .calendar-day.wfh {
     border-color: #00B8D9;
 }
 
+body.light-theme .calendar-day.holiday {
+    background: #e3f2fd;
+    border-color: #2196f3;
+}
+
 body.light-theme .calendar-day.exception {
-    background: #fff8e1;
-    border-color: #f39c12;
+    background: #fffde7;
+    border-color: #fdd835;
 }
 
 body.light-theme .day-context-menu {
@@ -1386,18 +1391,150 @@ body.light-theme .holiday-item.holiday-current-month {
 
 /* WFH Email calendar style */
 .calendar-day.wfh-email {
-    background: #1a2a1a;
-    border-color: #27ae60;
+    background: #2d1a3d;
+    border-color: #e91e63;
     cursor: pointer;
 }
 
 .calendar-day.wfh-email .day-number {
-    color: #27ae60;
+    color: #e91e63;
 }
 
-.dot.wfh-email { background: #27ae60; }
+.dot.wfh-email { background: #e91e63; }
 
 body.light-theme .calendar-day.wfh-email {
-    background: #e8f8f0;
-    border-color: #27ae60;
+    background: #fce4ec;
+    border-color: #e91e63;
+}
+
+
+/* User selection */
+.current-user {
+    font-size: 13px;
+    color: var(--text-primary);
+    padding: 4px 10px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.current-user:hover {
+    border-color: var(--accent-blue);
+}
+
+.modal-user {
+    max-width: 450px;
+}
+
+.user-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.user-select-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.user-select-item:hover {
+    border-color: var(--accent-blue);
+    background: var(--accent-blue);
+    color: white;
+}
+
+.user-select-item:hover .user-select-name {
+    color: white;
+}
+
+.user-select-item .avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 600;
+    color: white;
+    flex-shrink: 0;
+}
+
+.user-select-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.admin-badge {
+    margin-left: auto;
+    padding: 2px 8px;
+    background: var(--accent-purple);
+    color: white;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+
+/* Admin management buttons */
+.btn-admin {
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    font-weight: 500;
+    margin-left: 8px;
+    transition: all 0.2s;
+}
+
+.btn-admin-add {
+    background: transparent;
+    color: var(--accent-purple);
+    border: 1px solid var(--accent-purple);
+}
+
+.btn-admin-add:hover {
+    background: var(--accent-purple);
+    color: white;
+}
+
+.btn-admin-remove {
+    background: transparent;
+    color: var(--accent-orange);
+    border: 1px solid var(--accent-orange);
+}
+
+.btn-admin-remove:hover {
+    background: var(--accent-orange);
+    color: white;
+}
+
+.super-admin-badge {
+    font-size: 11px;
+    color: var(--accent-purple);
+    font-weight: 600;
+    margin-left: 8px;
+}
+
+.admin-tag {
+    font-size: 10px;
+    padding: 2px 6px;
+    background: rgba(137, 87, 229, 0.2);
+    color: var(--accent-purple);
+    border-radius: 8px;
+    font-weight: 500;
+    margin-left: 8px;
 }

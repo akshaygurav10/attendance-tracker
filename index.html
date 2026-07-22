@@ -21,6 +21,7 @@
                 </div>
             </div>
             <div class="nav-right">
+                <span class="current-user" id="currentUserDisplay" title="Click to switch user"></span>
                 <button class="btn-nav btn-theme" id="btnThemeToggle" title="Toggle Light/Dark Theme">🌙 Dark</button>
                 <button class="btn-nav btn-sync" id="btnSyncTeams" title="Sync to Teams">🔄 Sync to Teams</button>
                 <button class="btn-nav" id="btnEmailReport" title="Generate Monthly Dashboard Report">📧 Monthly Report</button>
@@ -182,6 +183,19 @@
                     <strong>💡 How it works:</strong><br>
                     Click "Send Email" → Outlook opens directly with the full HTML dashboard in the email body → Add recipient → Send!
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- User Selection Modal -->
+    <div class="modal active" id="userModal">
+        <div class="modal-content modal-user">
+            <div class="modal-header">
+                <h3>👤 Who are you?</h3>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom:12px;color:var(--text-secondary);">Select your name to continue. You can only edit your own attendance.</p>
+                <div class="user-list" id="userSelectList"></div>
             </div>
         </div>
     </div>

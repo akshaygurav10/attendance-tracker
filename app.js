@@ -48,6 +48,48 @@ const AVATAR_COLORS = [
 const REQUIRED_PERCENTAGE = 60;
 
 // ==========================================
+// USER / PERMISSIONS
+// ==========================================
+
+const SUPER_ADMIN = "Akshay Gurav"; // Cannot be removed as admin
+
+function getAdminList() {
+    const saved = localStorage.getItem('attendance_admin_list');
+    if (saved) {
+        return JSON.parse(saved);
+    }
+    return [SUPER_ADMIN];
+}
+
+function saveAdminList(admins) {
+    localStorage.setItem('attendance_admin_list', JSON.stringify(admins));
+    if (typeof database !== 'undefined') {
+        database.ref('admins').set(admins);
+    }
+}
+
+let ADMIN_MEMBERS = getAdminList();
+
+function getCurrentUser() {
+    return localStorage.getItem('attendance_current_user');
+}
+
+function setCurrentUser(name) {
+    localStorage.setItem('attendance_current_user', name);
+}
+
+function isAdmin() {
+    return ADMIN_MEMBERS.includes(getCurrentUser());
+}
+
+function canEdit(member) {
+    const currentUser = getCurrentUser();
+    if (!currentUser) return false;
+    if (ADMIN_MEMBERS.includes(currentUser)) return true;
+    return currentUser === member;
+}
+
+// ==========================================
 // DATA MANAGEMENT (Firebase + localStorage)
 // ==========================================
 
@@ -103,6 +145,15 @@ class AttendanceData {
                     TEAM_MEMBERS = members;
                     localStorage.setItem('attendance_team_members', JSON.stringify(members));
                     if (this.onDataLoaded) this.onDataLoaded();
+                }
+            });
+
+            // Sync admin list from Firebase
+            database.ref('admins').on('value', (snapshot) => {
+                const admins = snapshot.val();
+                if (admins && Array.isArray(admins)) {
+                    ADMIN_MEMBERS = admins;
+                    localStorage.setItem('attendance_admin_list', JSON.stringify(admins));
                 }
             });
         } else {
@@ -328,10 +379,63 @@ class App {
 
     init() {
         this.loadTheme();
+        this.showUserSelection();
         this.renderTeamList();
         this.renderCalendar();
         this.bindEvents();
         this.checkEmailReminder();
+    }
+
+    showUserSelection() {
+        const currentUser = getCurrentUser();
+        if (currentUser && TEAM_MEMBERS.includes(currentUser)) {
+            // User already selected
+            document.getElementById('userModal').classList.remove('active');
+            this.updateUserDisplay();
+            return;
+        }
+        // Show selection modal
+        this.renderUserSelectList();
+    }
+
+    renderUserSelectList() {
+        const list = document.getElementById('userSelectList');
+        list.innerHTML = TEAM_MEMBERS.map((member, i) => {
+            const initials = member.split(' ').map(n => n[0]).join('').substring(0, 2);
+            const isAdminMember = ADMIN_MEMBERS.includes(member);
+            return `<div class="user-select-item" data-user="${member}">
+                <span class="avatar" style="background:${AVATAR_COLORS[i % AVATAR_COLORS.length]}">${initials}</span>
+                <span class="user-select-name">${member}</span>
+                ${isAdminMember ? '<span class="admin-badge">Admin</span>' : ''}
+            </div>`;
+        }).join('');
+
+        // Bind clicks
+        list.querySelectorAll('.user-select-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const user = item.dataset.user;
+                setCurrentUser(user);
+                this.selectedMember = user;
+                document.getElementById('userModal').classList.remove('active');
+                this.updateUserDisplay();
+                this.renderTeamList();
+                this.renderCalendar();
+            });
+        });
+    }
+
+    updateUserDisplay() {
+        const user = getCurrentUser();
+        const display = document.getElementById('currentUserDisplay');
+        if (user) {
+            const badge = isAdmin() ? ' (Admin)' : '';
+            display.textContent = `👤 ${user}${badge}`;
+            display.style.cursor = 'pointer';
+            display.onclick = () => {
+                document.getElementById('userModal').classList.add('active');
+                this.renderUserSelectList();
+            };
+        }
     }
 
     // --- Team List ---
@@ -661,13 +765,30 @@ class App {
     // --- Team Management ---
     renderTeamManagement() {
         const list = document.getElementById('teamMemberList');
+        const currentUserIsAdmin = isAdmin();
         list.innerHTML = TEAM_MEMBERS.map((member, i) => {
             const initials = member.split(' ').map(n => n[0]).join('').substring(0, 2);
+            const memberIsAdmin = ADMIN_MEMBERS.includes(member);
+            const isSuperAdmin = member === SUPER_ADMIN;
+            let adminBtn = '';
+            if (currentUserIsAdmin) {
+                if (memberIsAdmin && !isSuperAdmin) {
+                    adminBtn = `<button class="btn-admin btn-admin-remove" data-member="${member}" title="Remove admin role">👑 Remove Admin</button>`;
+                } else if (!memberIsAdmin) {
+                    adminBtn = `<button class="btn-admin btn-admin-add" data-member="${member}" title="Make admin">Make Admin</button>`;
+                } else if (isSuperAdmin) {
+                    adminBtn = `<span class="super-admin-badge">👑 Super Admin</span>`;
+                }
+            } else if (memberIsAdmin) {
+                adminBtn = `<span class="admin-tag">Admin</span>`;
+            }
+
             return `<div class="team-member-item" draggable="true" data-index="${i}" data-member="${member}">
                 <div class="team-member-info">
                     <span class="drag-handle" title="Drag to reorder">☰</span>
                     <span class="avatar" style="background:${AVATAR_COLORS[i % AVATAR_COLORS.length]}">${initials}</span>
                     <span class="team-member-name">${member}</span>
+                    ${adminBtn}
                 </div>
                 <div class="team-member-actions">
                     <button class="btn-edit" data-member="${member}" title="Edit name">✏️</button>
@@ -733,11 +854,37 @@ class App {
     }
 
     resetTeamToDefault() {
+        if (!isAdmin()) {
+            alert('⚠️ Only admins can reset the team list.');
+            return;
+        }
         if (!confirm('Reset team list to the default members?\n\nThis will replace the current list. Attendance data is preserved.')) return;
         TEAM_MEMBERS = [...DEFAULT_TEAM_MEMBERS];
         saveTeamMembers(TEAM_MEMBERS);
         this.selectedMember = TEAM_MEMBERS[0];
         this.renderTeamList();
+        this.renderTeamManagement();
+    }
+
+    // --- Admin Management ---
+    makeAdmin(member) {
+        if (!isAdmin()) return;
+        if (ADMIN_MEMBERS.includes(member)) return;
+        if (!confirm(`Make "${member}" an admin?\n\nAdmins can edit everyone's attendance and manage the team.`)) return;
+        ADMIN_MEMBERS.push(member);
+        saveAdminList(ADMIN_MEMBERS);
+        this.renderTeamManagement();
+    }
+
+    removeAdmin(member) {
+        if (!isAdmin()) return;
+        if (member === SUPER_ADMIN) {
+            alert('⚠️ Cannot remove the super admin.');
+            return;
+        }
+        if (!confirm(`Remove admin rights from "${member}"?`)) return;
+        ADMIN_MEMBERS = ADMIN_MEMBERS.filter(m => m !== member);
+        saveAdminList(ADMIN_MEMBERS);
         this.renderTeamManagement();
     }
 
@@ -764,6 +911,10 @@ class App {
     }
 
     addMember(name) {
+        if (!isAdmin()) {
+            alert('⚠️ Only admins can add team members.');
+            return;
+        }
         if (!name || name.trim() === '') return;
         name = name.trim();
         if (TEAM_MEMBERS.includes(name)) {
@@ -779,6 +930,10 @@ class App {
     }
 
     editMember(oldName) {
+        if (!isAdmin()) {
+            alert('⚠️ Only admins can edit team member names.');
+            return;
+        }
         const newName = prompt(`Edit name for "${oldName}":`, oldName);
         if (!newName || newName.trim() === '' || newName.trim() === oldName) return;
         const trimmed = newName.trim();
@@ -805,6 +960,10 @@ class App {
     }
 
     removeMember(name) {
+        if (!isAdmin()) {
+            alert('⚠️ Only admins can remove team members.');
+            return;
+        }
         if (!confirm(`Are you sure you want to remove "${name}" from the team?`)) return;
         TEAM_MEMBERS = TEAM_MEMBERS.filter(m => m !== name);
         saveTeamMembers(TEAM_MEMBERS);
@@ -1183,10 +1342,13 @@ ${m.percentage}%
                 !dayEl.classList.contains('weekend') &&
                 !dayEl.classList.contains('holiday') &&
                 !dayEl.classList.contains('future')) {
+                if (!canEdit(this.selectedMember)) {
+                    alert(`⚠️ You can only edit your own attendance.\n\nYou are logged in as: ${getCurrentUser()}`);
+                    return;
+                }
                 const date = dayEl.dataset.date;
                 const leaveType = this.data.getLeaveType(this.selectedMember, date);
                 if (leaveType) {
-                    // If already has leave/wfh/exception, show menu
                     this.showDayMenu(date, dayEl);
                 } else {
                     const isPresent = this.data.isPresent(this.selectedMember, date);
@@ -1204,6 +1366,10 @@ ${m.percentage}%
                 !dayEl.classList.contains('holiday') &&
                 !dayEl.classList.contains('future')) {
                 e.preventDefault();
+                if (!canEdit(this.selectedMember)) {
+                    alert(`⚠️ You can only edit your own attendance.\n\nYou are logged in as: ${getCurrentUser()}`);
+                    return;
+                }
                 const date = dayEl.dataset.date;
                 this.showDayMenu(date, dayEl);
             }
@@ -1288,6 +1454,12 @@ ${m.percentage}%
             } else if (e.target.classList.contains('btn-edit')) {
                 const member = e.target.dataset.member;
                 this.editMember(member);
+            } else if (e.target.classList.contains('btn-admin-add')) {
+                const member = e.target.dataset.member;
+                this.makeAdmin(member);
+            } else if (e.target.classList.contains('btn-admin-remove')) {
+                const member = e.target.dataset.member;
+                this.removeAdmin(member);
             }
         });
 
