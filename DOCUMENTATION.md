@@ -24,7 +24,7 @@ A real-time team attendance tracking application with a Jira-style dark/light UI
 | Type | Icon | Effect |
 |------|------|--------|
 | ✅ Present | Green | Counted as attended |
-| 🏠 Work From Home (WFH) | Cyan | Counted as present |
+| 🏠 Work From Home (WFH) | Cyan | Day excluded from working days (not counted in attendance) |
 | 🚫 Leave | Purple | Day excluded from working days |
 | ⚡ Exception | Orange | Day excluded from working days |
 
@@ -145,11 +145,11 @@ attendance-tracker-app/
 
 ### Attendance Calculation
 ```
-Effective Working Days = Total Days - Weekends - Holidays - Leaves - Exceptions
+Effective Working Days = Total Days - Weekends - Holidays - Leaves - Exceptions - WFH days
 
 Attendance % = (Days Attended / Effective Working Days) × 100
 
-Days Attended = Present days + WFH days
+Days Attended = Present days only (WFH not included)
 ```
 
 ### Key Classes

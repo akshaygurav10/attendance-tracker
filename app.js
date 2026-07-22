@@ -241,7 +241,7 @@ class AttendanceData {
         return workingDays;
     }
 
-    // Working days for a specific member (excludes their leaves/exceptions)
+    // Working days for a specific member (excludes their leaves/exceptions/wfh/wfh-email)
     getEffectiveWorkingDays(member, year, month) {
         const daysInMonth = new Date(year, month + 1, 0).getDate();
         let workingDays = 0;
@@ -249,8 +249,7 @@ class AttendanceData {
             const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
             if (!this.isWeekend(dateStr) && !this.isHoliday(dateStr)) {
                 const leaveType = this.getLeaveType(member, dateStr);
-                // Leave and exception days don't count as working days
-                if (leaveType === 'leave' || leaveType === 'exception') {
+                if (leaveType === 'leave' || leaveType === 'exception' || leaveType === 'wfh' || leaveType === 'wfh-email') {
                     continue;
                 }
                 workingDays++;
@@ -265,10 +264,6 @@ class AttendanceData {
         for (let day = 1; day <= daysInMonth; day++) {
             const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
             if (this.isPresent(member, dateStr)) {
-                count++;
-            }
-            // WFH counts as present
-            if (this.getLeaveType(member, dateStr) === 'wfh') {
                 count++;
             }
         }
@@ -437,7 +432,11 @@ class App {
                 } else if (leaveType === 'wfh') {
                     classes.push('wfh');
                     statusIcon = '🏠';
-                    title = 'Work From Home (counted as present)';
+                    title = 'Work From Home (not counted as working day)';
+                } else if (leaveType === 'wfh-email') {
+                    classes.push('wfh-email');
+                    statusIcon = '📧';
+                    title = 'WFH Email (excluded from total days)';
                 } else if (leaveType === 'exception') {
                     classes.push('exception');
                     statusIcon = '⚡';
@@ -484,6 +483,7 @@ class App {
             <button class="menu-item ${isPresent && !leaveType ? 'active' : ''}" data-action="present">✅ Present</button>
             <button class="menu-item ${leaveType === 'leave' ? 'active' : ''}" data-action="leave">🚫 Leave</button>
             <button class="menu-item ${leaveType === 'wfh' ? 'active' : ''}" data-action="wfh">🏠 Work From Home</button>
+            <button class="menu-item ${leaveType === 'wfh-email' ? 'active' : ''}" data-action="wfh-email">📧 WFH Email</button>
             <button class="menu-item ${leaveType === 'exception' ? 'active' : ''}" data-action="exception">⚡ Exception</button>
             <hr>
             <button class="menu-item" data-action="clear">❌ Clear</button>
@@ -508,6 +508,8 @@ class App {
                 this.data.markLeave(this.selectedMember, date, 'leave');
             } else if (action === 'wfh') {
                 this.data.markLeave(this.selectedMember, date, 'wfh');
+            } else if (action === 'wfh-email') {
+                this.data.markLeave(this.selectedMember, date, 'wfh-email');
             } else if (action === 'exception') {
                 this.data.markLeave(this.selectedMember, date, 'exception');
             } else if (action === 'clear') {

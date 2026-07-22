@@ -1382,3 +1382,22 @@ body.light-theme .holiday-item.holiday-current-month {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.4; }
 }
+
+
+/* WFH Email calendar style */
+.calendar-day.wfh-email {
+    background: #1a2a1a;
+    border-color: #27ae60;
+    cursor: pointer;
+}
+
+.calendar-day.wfh-email .day-number {
+    color: #27ae60;
+}
+
+.dot.wfh-email { background: #27ae60; }
+
+body.light-theme .calendar-day.wfh-email {
+    background: #e8f8f0;
+    border-color: #27ae60;
+}
