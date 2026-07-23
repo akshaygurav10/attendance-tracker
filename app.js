@@ -436,6 +436,10 @@ class AttendanceData {
             if (this.isPresent(member, dateStr)) {
                 count++;
             }
+            // "Planning to Come" counts same as Present
+            if (this.getLeaveType(member, dateStr) === 'planned') {
+                count++;
+            }
         }
         return count;
     }
@@ -1003,6 +1007,10 @@ class App {
             const leaveType = this.data.getLeaveType(this.selectedMember, dateStr);
             const isToday = dateStr === todayStr;
             const isFuture = new Date(dateStr + 'T23:59:59') > today;
+            // Allow planning up to 2 months ahead
+            const twoMonthsAhead = new Date(today);
+            twoMonthsAhead.setMonth(twoMonthsAhead.getMonth() + 2);
+            const canPlan = isFuture && new Date(dateStr) <= twoMonthsAhead;
 
             let classes = ['calendar-day'];
             let statusIcon = '';
@@ -1033,7 +1041,13 @@ class App {
                     classes.push('exception');
                     statusIcon = '⚡';
                     title = 'Exception (not counted as working day)';
+                } else if (leaveType === 'planned') {
+                    classes.push('planned');
+                    statusIcon = '📋';
+                    title = 'Planning to Come';
                 }
+                // Mark future days with leave type as future too
+                if (isFuture) classes.push('future');
             } else if (isToday) {
                 if (isPresent) {
                     classes.push('present');
@@ -1041,6 +1055,7 @@ class App {
                 }
             } else if (isFuture) {
                 classes.push('future');
+                if (canPlan) classes.push('plannable');
             } else if (isPresent) {
                 classes.push('present');
                 statusIcon = '✅';
@@ -1114,6 +1129,59 @@ class App {
         });
 
         // Close menu on outside click
+        const closeMenu = (e) => {
+            if (!menu.contains(e.target)) {
+                menu.remove();
+                document.removeEventListener('click', closeMenu);
+            }
+        };
+        setTimeout(() => document.addEventListener('click', closeMenu), 10);
+    }
+
+    // --- Planning Menu (Future Days) ---
+    showPlanningMenu(date, targetEl) {
+        const existingMenu = document.getElementById('dayContextMenu');
+        if (existingMenu) existingMenu.remove();
+
+        const menu = document.createElement('div');
+        menu.id = 'dayContextMenu';
+        menu.className = 'day-context-menu';
+
+        const leaveType = this.data.getLeaveType(this.selectedMember, date);
+
+        menu.innerHTML = `
+            <div class="menu-title">Plan for this day:</div>
+            <button class="menu-item ${leaveType === 'planned' ? 'active' : ''}" data-action="planned">📋 Planning to Come</button>
+            <button class="menu-item ${leaveType === 'leave' ? 'active' : ''}" data-action="leave">🚫 Leave</button>
+            <button class="menu-item ${leaveType === 'exception' ? 'active' : ''}" data-action="exception">⚡ Exception</button>
+            <hr>
+            <button class="menu-item" data-action="clear">❌ Clear</button>
+        `;
+
+        const rect = targetEl.getBoundingClientRect();
+        menu.style.top = `${rect.bottom + window.scrollY + 4}px`;
+        menu.style.left = `${rect.left + window.scrollX}px`;
+        document.body.appendChild(menu);
+
+        menu.addEventListener('click', (e) => {
+            const btn = e.target.closest('.menu-item');
+            if (!btn) return;
+            const action = btn.dataset.action;
+
+            if (action === 'planned') {
+                this.data.markLeave(this.selectedMember, date, 'planned');
+            } else if (action === 'leave') {
+                this.data.markLeave(this.selectedMember, date, 'leave');
+            } else if (action === 'exception') {
+                this.data.markLeave(this.selectedMember, date, 'exception');
+            } else if (action === 'clear') {
+                this.data.removeLeave(this.selectedMember, date);
+            }
+
+            menu.remove();
+            this.renderCalendar();
+        });
+
         const closeMenu = (e) => {
             if (!menu.contains(e.target)) {
                 menu.remove();
@@ -1415,7 +1483,6 @@ class App {
             alert('⚠️ Cannot remove the super admin.');
             return;
         }
-        // Fix 4: Only SUPER_ADMIN can remove other admins
         if (getCurrentUser() !== SUPER_ADMIN) {
             alert('⚠️ Only super admin can remove other admins.');
             return;
@@ -1423,6 +1490,11 @@ class App {
         if (!confirm(`Remove admin rights from "${member}"?`)) return;
         ADMIN_MEMBERS = ADMIN_MEMBERS.filter(m => m !== member);
         saveAdminList(ADMIN_MEMBERS);
+        // Update isAdmin field in Firebase
+        if (typeof database !== 'undefined') {
+            const sanitizedName = member.replace(/\./g, '___DOT___');
+            database.ref('users/' + sanitizedName + '/isAdmin').set(false);
+        }
         this.renderTeamManagement();
     }
 
@@ -2024,25 +2096,32 @@ ${m.percentage}%
             const dayEl = e.target.closest('.calendar-day');
             if (dayEl && !dayEl.classList.contains('empty') &&
                 !dayEl.classList.contains('weekend') &&
-                !dayEl.classList.contains('holiday') &&
-                !dayEl.classList.contains('future')) {
+                !dayEl.classList.contains('holiday')) {
                 const currentUser = localStorage.getItem('attendance_current_user');
                 const viewing = this.selectedMember;
                 if (!currentUser) return;
-                // Check permission: admin OR own calendar
                 const isAdminUser = ADMIN_MEMBERS.indexOf(currentUser) !== -1 || currentUser === SUPER_ADMIN;
                 const isSelf = currentUser === viewing;
-                if (!isAdminUser && !isSelf) {
-                    return;
-                }
+                if (!isAdminUser && !isSelf) return;
+
                 const date = dayEl.dataset.date;
-                const leaveType = this.data.getLeaveType(viewing, date);
-                if (leaveType) {
-                    this.showDayMenu(date, dayEl);
+                const isFuture = dayEl.classList.contains('future');
+
+                if (isFuture) {
+                    // Only allow planning within 2 months
+                    const twoMonthsAhead = new Date();
+                    twoMonthsAhead.setMonth(twoMonthsAhead.getMonth() + 2);
+                    if (new Date(date) > twoMonthsAhead) return;
+                    this.showPlanningMenu(date, dayEl);
                 } else {
-                    const isPresent = this.data.isPresent(viewing, date);
-                    this.data.markAttendance(viewing, date, !isPresent);
-                    this.renderCalendar();
+                    const leaveType = this.data.getLeaveType(viewing, date);
+                    if (leaveType) {
+                        this.showDayMenu(date, dayEl);
+                    } else {
+                        const isPresent = this.data.isPresent(viewing, date);
+                        this.data.markAttendance(viewing, date, !isPresent);
+                        this.renderCalendar();
+                    }
                 }
             }
         });
@@ -2052,19 +2131,26 @@ ${m.percentage}%
             const dayEl = e.target.closest('.calendar-day');
             if (dayEl && !dayEl.classList.contains('empty') &&
                 !dayEl.classList.contains('weekend') &&
-                !dayEl.classList.contains('holiday') &&
-                !dayEl.classList.contains('future')) {
+                !dayEl.classList.contains('holiday')) {
                 e.preventDefault();
                 const currentUser = localStorage.getItem('attendance_current_user');
                 const viewing = this.selectedMember;
                 if (!currentUser) return;
                 const isAdminUser = ADMIN_MEMBERS.indexOf(currentUser) !== -1 || currentUser === SUPER_ADMIN;
                 const isSelf = currentUser === viewing;
-                if (!isAdminUser && !isSelf) {
-                    return;
-                }
+                if (!isAdminUser && !isSelf) return;
+
                 const date = dayEl.dataset.date;
-                this.showDayMenu(date, dayEl);
+                const isFuture = dayEl.classList.contains('future');
+
+                if (isFuture) {
+                    const twoMonthsAhead = new Date();
+                    twoMonthsAhead.setMonth(twoMonthsAhead.getMonth() + 2);
+                    if (new Date(date) > twoMonthsAhead) return;
+                    this.showPlanningMenu(date, dayEl);
+                } else {
+                    this.showDayMenu(date, dayEl);
+                }
             }
         });
 

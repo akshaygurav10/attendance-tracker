@@ -1831,3 +1831,32 @@ select.auth-input {
     text-align: center;
     margin-top: 4px;
 }
+
+
+/* Planned day */
+.calendar-day.planned {
+    background: #1a2d3d;
+    border-color: #42a5f5;
+    cursor: pointer;
+}
+
+.calendar-day.planned .day-number {
+    color: #42a5f5;
+}
+
+/* Future plannable days */
+.calendar-day.future.plannable {
+    opacity: 0.7;
+    cursor: pointer;
+}
+
+.calendar-day.future.plannable:hover {
+    opacity: 1;
+    border-color: #42a5f5;
+    background: var(--bg-tertiary);
+}
+
+body.light-theme .calendar-day.planned {
+    background: #e3f2fd;
+    border-color: #42a5f5;
+}
