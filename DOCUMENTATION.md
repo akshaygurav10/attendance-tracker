@@ -4,8 +4,7 @@
 
 A real-time team attendance tracking application with a Jira-style dark/light UI. Built with vanilla HTML, CSS, and JavaScript, powered by Firebase Realtime Database for cloud sync across all team members.
 
-**Live URL:** Your GitHub Pages URL (e.g., `https://yourusername.github.io/attendance-tracker/`)
-
+**Live URL:** Your GitHub Pages URL  
 **Repository:** `https://code.saba.com/users/agurav/repos/attendance-tracker/`
 
 ---
@@ -19,78 +18,139 @@ A real-time team attendance tracking application with a Jira-style dark/light UI
 - **60% Attendance Threshold** — Visual indicators (green/orange/red) for compliance
 - **Summary Dashboard** — View all team members' attendance at a glance with sortable columns
 - **Dark/Light Theme** — Toggle between themes, preference saved per user
+- **Future Planning** — Plan attendance for next 2 months (Planning to Come, Leave, Exception)
+
+### Authentication & Security
+- **Username-based login** — Users type their username (e.g., `agurav`) or full name to login
+- **SHA-256 encrypted passwords** — Passwords hashed before storing in Firebase
+- **Remember Me** — Save credentials in browser localStorage
+- **Change Password** — Users can change their own password (requires old password)
+- **Admin password reset** — Admin resets any user's password to default `Temp@123`
+- **Role-based access** — Admin vs regular user permissions
+- **Super Admin** — Akshay Gurav (cannot be removed as admin)
 
 ### Attendance Types
-| Type | Icon | Effect |
-|------|------|--------|
-| ✅ Present | Green | Counted as attended |
-| 🏠 Work From Home (WFH) | Cyan | Day excluded from working days (not counted in attendance) |
-| 🚫 Leave | Purple | Day excluded from working days |
-| ⚡ Exception | Orange | Day excluded from working days |
 
-### Team Management
+| Type | Icon | Color | Effect |
+|------|------|-------|--------|
+| ✅ Present | Green | Counted as attended |
+| 📋 Planning to Come | Blue | Counted as attended (future months) |
+| 🏠 Work From Home | Cyan | Day excluded from working days |
+| 📧 WFH Email | Pink | Day excluded from total days (like weekend) |
+| 🚫 Leave | Purple | Day excluded from working days |
+| ⚡ Exception | Yellow | Day excluded from working days |
+| 🏖️ Holiday | Blue | Auto-excluded, set by admin |
+| 🔒 Weekend | Gray | Auto-excluded (Sat/Sun) |
+
+### Stat Tiles (Calendar View)
+- **Working Days** — Total days minus weekends, holidays, leaves, exceptions, WFH, WFH Email
+- **Days Attended** — Present + Planning to Come days
+- **Need to Attend** — Required minus Days Attended (shows 0 when 60% met)
+- **Required (60%)** — Minimum days needed
+- **Attendance %** — (Days Attended / Working Days) × 100
+- **Motivation Message** — Random WFH motivation message when 60% is completed
+
+### Team Management (Admin only)
 - **Add members** — Type name and click "Add Member"
-- **Remove members** — Click "Remove" (attendance history preserved)
+- **Remove members** — Soft-delete (marked as terminated, can be restored)
 - **Edit names** — Click ✏️ to rename (data transfers to new name)
 - **Drag to reorder** — Drag the ☰ handle to rearrange member order
-- **Reset to default** — Restore original team list
+- **Restore terminated** — Admin can restore deleted members with password reset
+- **Make/Remove Admin** — Super admin can promote/demote admins
+- **Reset password** — Admin clicks 🔑 → password resets to `Temp@123`
 
-### Reports
+### Reports (Admin only)
 - **Monthly Dashboard Report** — Visual report with KPI cards, progress bars, status badges
 - **Copy to Clipboard** — Copies rich HTML, paste directly into Outlook/Teams
-- **Send Email** — Opens Outlook with dashboard in email body
+- **Send Email** — Opens .eml file with dashboard in Outlook
 - **Sortable columns** — Click column headers to sort by Name, Days Attended, %, Status
 
-### Holidays
+### Holidays (Admin only)
 - **Pre-loaded** — Indian 2026 holidays included
 - **Add/Remove** — Manage holidays from the Holidays view
 - **Current month highlight** — This month's holidays shown with cyan badge
-- **Auto-excluded** — Holiday days not counted as working days
 
-### Sync & Sharing
-- **Firebase Real-time** — All data syncs automatically across all users
-- **Sync to Teams** — Export/Import JSON for manual sharing
-- **Connection indicator** — Green dot = connected, Red = offline, Yellow = connecting
-- **Offline support** — App works offline using localStorage, syncs when reconnected
+### Visibility Settings (Admin only)
+- **"Everyone sees everyone's data" toggle** — In Manage Team
+- **Enabled** — All users see all team members, summary visible
+- **Disabled** — Users only see their own calendar, summary hidden
+
+### Future Planning (Next 2 Months)
+- Navigate to future months using ◀▶ arrows
+- Click any future day → planning menu appears:
+  - 📋 **Planning to Come** — counts as attended in calculations
+  - 🚫 **Leave** — excluded from working days
+  - ⚡ **Exception** — excluded from working days
+  - ❌ **Clear** — remove planning
+- Days beyond 2 months remain non-clickable
+- Current month days show regular options (Present, Leave, WFH, etc.)
+
+---
+
+## User Roles
+
+### Super Admin (Akshay Gurav)
+- Cannot be removed as admin
+- Can edit everyone's attendance
+- Can add/remove/edit team members
+- Can make/remove other admins
+- Can reset passwords (to `Temp@123`)
+- Can manage holidays
+- Can toggle visibility settings
+- Can generate reports & sync data
+- Sees all team members always
+
+### Admin (Promoted by Super Admin)
+- Can edit everyone's attendance
+- Can add/remove/edit team members
+- Can reset passwords
+- Can manage holidays
+- Cannot remove other admins (only super admin can)
+
+### Regular User
+- Can only edit their own attendance
+- Can plan future attendance (next 2 months)
+- Can change their own password
+- Can see others' data only if visibility is enabled by admin
+- Cannot see: Holidays, Manage Team, Sync, Monthly Report, Summary (when visibility disabled)
 
 ---
 
 ## How to Use
 
-### Marking Attendance
-1. Select a team member from the sidebar (or click any name from any view)
-2. **Left-click** a day to toggle Present ✅
-3. **Right-click** a day to see options: Present, Leave, WFH, Exception, Clear
+### First Time Setup
+1. Super Admin (Akshay Gurav) opens the app
+2. Types username `agurav` or `Akshay Gurav` + any password → auto-registers
+3. Other team members click "Register here" → enter full name + password
+4. Username is auto-generated (e.g., "Krutik Arekar" → `karekar`)
 
-### Viewing Summary
-1. Click **📊 Summary** in the sidebar
-2. Click column headers (▲▼) to sort
-3. Click **🔄 Reset Order** to return to default team order
-4. Use ◀ ▶ arrows to navigate months
+### Login
+1. Enter your username (e.g., `agurav`) or full name
+2. Enter password
+3. Check "Remember me" to save credentials
+4. Click Login
 
-### Generating Reports
-1. Click **📧 Monthly Report** in the top nav
-2. Preview the dashboard
-3. Click **📋 Copy Dashboard to Clipboard** → Paste into Outlook/Teams
-4. Or click **📧 Send Email** → Outlook opens with content ready
+### Marking Attendance (Current Month)
+- **Left-click** a day → toggles Present ✅
+- **Right-click** a day → shows full menu (Present, Leave, WFH, WFH Email, Exception, Clear)
 
-### Managing Team
-1. Click **👥 Manage Team** in the sidebar
-2. Add new members using the input field
-3. Click ✏️ to edit a name
-4. Click "Remove" to remove a member
-5. Drag ☰ to reorder
-6. Click **🔄 Reset to Default** to restore original list
+### Planning Attendance (Future Months)
+- Navigate to next/next-next month using ▶ arrow
+- **Click** any day → planning menu (Planning to Come, Leave, Exception, Clear)
+- "Planning to Come" counts toward your 60% target
 
-### Managing Holidays
-1. Click **🏖️ Holidays** in the sidebar
-2. Use the date picker and name field to add holidays
-3. Click "Remove" to delete a holiday
-4. Current month holidays are highlighted in cyan
+### Switching Users / Logout
+- Click **⇄ Logout** in the top-right
+- Login screen appears for a different user
 
-### Switching Theme
-- Click **☀️ Light** or **🌙 Dark** button in the top nav
-- Theme preference is saved and persists
+### Changing Password
+- Click **🔑 Password** in the top-right
+- Enter old password → enter new password → confirm
+
+### Forgot Password
+- Contact admin → admin resets to `Temp@123`
+- Login with `Temp@123` → prompted to set new password
+- Set your own password
 
 ---
 
@@ -100,9 +160,9 @@ A real-time team attendance tracking application with a Jira-style dark/light UI
 ```
 attendance-tracker-app/
 ├── index.html          — Main HTML page
-├── app.js              — Application logic (classes, rendering, events)
+├── app.js              — Application logic
 ├── styles.css          — Dark/Light theme styles
-├── firebase-config.js  — Firebase initialization and connection monitoring
+├── firebase-config.js  — Firebase initialization
 ├── README.md           — Quick overview
 ├── DEPLOYMENT.md       — Deployment instructions
 └── DOCUMENTATION.md    — This file
@@ -110,18 +170,15 @@ attendance-tracker-app/
 
 ### Data Storage
 
-**Primary:** Firebase Realtime Database (cloud, shared)
-**Backup:** Browser localStorage (local, per-user)
+**Primary:** Firebase Realtime Database  
+**Backup:** Browser localStorage
 
-#### Firebase Database Structure
+### Firebase Database Structure
 ```json
 {
   "appData": {
     "attendance": {
-      "Member Name": {
-        "2026-07-21": true,
-        "2026-07-22": true
-      }
+      "Member Name": { "2026-07-21": true }
     },
     "holidays": [
       { "date": "2026-01-26", "name": "Republic Day" }
@@ -130,39 +187,55 @@ attendance-tracker-app/
       "Member Name": {
         "2026-07-23": "leave",
         "2026-07-24": "wfh",
-        "2026-07-25": "exception"
+        "2026-07-25": "exception",
+        "2026-07-28": "wfh-email",
+        "2026-08-05": "planned"
       }
-    },
-    "lastUpdated": "2026-07-22T10:30:00.000Z"
+    }
   },
-  "teamMembers": [
-    "Krutik Arekar",
-    "Humera J.",
-    "..."
-  ]
+  "teamMembers": ["Akshay Gurav", "Krutik Arekar"],
+  "admins": ["Akshay Gurav"],
+  "users": {
+    "Akshay Gurav": {
+      "name": "Akshay Gurav",
+      "username": "agurav",
+      "passwordHash": "sha256...",
+      "isAdmin": true,
+      "isSuperAdmin": true,
+      "terminated": false,
+      "registeredAt": "2026-07-22T10:00:00Z"
+    }
+  },
+  "settings": {
+    "everyoneSeesAll": true
+  },
+  "connectionTest": { "timestamp": 123, "status": "connected" }
 }
 ```
 
 ### Attendance Calculation
 ```
-Effective Working Days = Total Days - Weekends - Holidays - Leaves - Exceptions - WFH days
+Effective Working Days = Total Days - Weekends - Holidays - Leaves - Exceptions - WFH - WFH Email
+
+Days Attended = Present days + "Planning to Come" days
 
 Attendance % = (Days Attended / Effective Working Days) × 100
 
-Days Attended = Present days only (WFH not included)
+Need to Attend = Required (60% of Working Days) - Days Attended
 ```
 
-### Key Classes
+### Username Generation
+- Format: first initial (lowercase) + full last name (lowercase)
+- "Akshay Gurav" → `agurav`
+- "Krutik Arekar" → `karekar`
+- "Humera J." → `hj`
+- Duplicates: try 2-char prefix (`akjadhav`), then append random number
 
-**AttendanceData** — Manages all data (CRUD operations, calculations)
-- Syncs with Firebase on every write
-- Listens for real-time updates from Firebase
-- Falls back to localStorage if Firebase is unavailable
-
-**App** — UI controller (rendering, events, navigation)
-- Handles all user interactions
-- Re-renders automatically when Firebase data changes
-- Manages view switching, sorting, theme
+### Password Security
+- Passwords hashed with SHA-256 (browser `crypto.subtle` API)
+- Plain text never stored
+- Default reset password: `Temp@123`
+- Minimum 4 characters
 
 ---
 
@@ -181,32 +254,12 @@ const firebaseConfig = {
 };
 ```
 
-### Database Rules (Test Mode)
+### Database Rules
 ```json
 {
   "rules": {
-    ".read": true,
-    ".write": true
-  }
-}
-```
-
-> ⚠️ **Security Note:** Test mode allows anyone to read/write. For production, update rules to restrict access. See "Security" section below.
-
-### Recommended Production Rules
-```json
-{
-  "rules": {
-    ".read": true,
-    ".write": true,
-    "appData": {
-      ".read": true,
-      ".write": true
-    },
-    "teamMembers": {
-      ".read": true,
-      ".write": true
-    }
+    ".read": "now < 1787250600000",
+    ".write": "now < 1787250600000"
   }
 }
 ```
@@ -217,64 +270,37 @@ const firebaseConfig = {
 
 ### GitHub Pages
 1. Push code to GitHub repository
-2. Go to Settings → Pages → Deploy from branch (main, root)
+2. Settings → Pages → Deploy from branch (main, root)
 3. App is live at `https://username.github.io/repo-name/`
 
 ### Microsoft Teams Integration
-1. Open Teams → Channel → Click "+" tab
-2. Select "Website"
-3. Name: "Attendance Tracker"
-4. URL: Your GitHub Pages URL
-5. Save
-
-### SharePoint Embed
-1. Create a SharePoint page
-2. Add "Embed" web part
-3. Paste your GitHub Pages URL
+1. Teams → Channel → "+" tab → Website
+2. Paste GitHub Pages URL
+3. Save
 
 ---
 
-## Team Members (Default)
+## UI Layout
 
-| # | Name |
-|---|------|
-| 1 | Krutik Arekar |
-| 2 | Humera J. |
-| 3 | Manoj K. |
-| 4 | Reshma B. |
-| 5 | Nishant Joshi |
-| 6 | Nisar Nadaf |
-| 7 | Rahul O. |
-| 8 | Shashank D. |
-| 9 | Akshay Gurav |
-| 10 | Suranjana G. |
-| 11 | Vikram H. |
-| 12 | Rakshita Devkar |
-| 13 | Shailesh Hande |
-| 14 | Akshata Jadhav |
-| 15 | Robinsh Raj |
+### Top Navigation Bar
+```
+[Logo] Attendance Tracker 🟢Synced  |  [agurav 👑 | 🔑 Password | ⇄ Logout]  [☀️Light] [🔄Sync] [📧Report]
+```
+- Sync indicator: 🟢 Synced / 🔴 Offline
+- Password, Logout, Sync, Report buttons
+- Sync & Report hidden for non-admin
 
----
+### Sidebar
+- Team Members list (logged-in user on top with "(You)" tag)
+- Views: Calendar, Summary (visibility-dependent), Holidays (admin), Manage Team (admin)
+- Legend: Present, WFH, WFH Email, Leave, Exception, Weekend, Holiday, Today
 
-## Report Schedule
-
-- **20th of every month** — Mid-month report
-- **Last day of month** — End-of-month report
-
-The app automatically reminds you on these dates to generate the report.
-
----
-
-## Keyboard Shortcuts & Interactions
-
-| Action | How |
-|--------|-----|
-| Mark present | Left-click a day |
-| Leave/WFH/Exception menu | Right-click a day |
-| Switch to member's calendar | Click any member name (from any view) |
-| Sort table | Click column header |
-| Reorder members | Drag ☰ handle |
-| Add member | Type name + Enter |
+### Calendar View
+- Month navigation (centered): ◀ July 2026 ▶
+- Viewing info (right): "📝 Editing: Name" or "👁️ View Only"
+- Stat tiles (centered): Working Days, Days Attended, Need to Attend, Required, Attendance %
+- Motivation message (when 60% met)
+- Calendar grid (centered)
 
 ---
 
@@ -282,30 +308,29 @@ The app automatically reminds you on these dates to generate the report.
 
 | Issue | Solution |
 |-------|----------|
-| Yellow/Red dot (disconnected) | Check internet connection; Firebase may be temporarily unavailable |
-| Data not syncing | Verify Firebase Realtime Database is created and rules allow read/write |
-| App shows old data | Hard refresh (Ctrl+Shift+R) to clear cache |
-| Theme not saving | Check if localStorage is enabled in browser |
-| Report shows plain text in email | Use "Copy Dashboard to Clipboard" and paste (Ctrl+V) into Outlook instead |
-| Team member order reset | Click "Reset to Default" in Manage Team view |
+| Can't login | Check username spelling. Try full name or generated username. |
+| "Username not found" | User needs to register first. |
+| Forgot password | Contact admin for reset to `Temp@123`. |
+| Data not saving | Check 🟢/🔴 indicator. Ensure Firebase rules allow writes. |
+| Can't see other members | Admin needs to enable "Everyone sees everyone's data" toggle. |
+| Can't edit others' calendar | Only admin can edit others. Regular users edit only their own. |
+| Add Member not working | Ensure you're logged in as admin. Check browser console for errors. |
+| Future days not clickable | Only next 2 months are plannable. Beyond that stays locked. |
 
 ---
 
-## Security Considerations
+## Changelog
 
-1. **Firebase rules** — Switch from test mode to authenticated rules after 30 days
-2. **API keys** — Firebase web API keys are safe to expose (they're restricted by domain in Firebase Console → App Check)
-3. **Data privacy** — Attendance data is visible to anyone with the database URL in test mode. Restrict access for production use.
-4. **No authentication** — Currently no login required. All users share the same data pool. For per-user access control, Firebase Authentication can be added later.
-
----
-
-## Future Enhancements
-
-- [ ] Firebase Authentication (Google sign-in for each team member)
-- [ ] Per-user permissions (admin vs. member)
-- [ ] Monthly report auto-email via Firebase Cloud Functions
-- [ ] Export to Excel/CSV
-- [ ] Historical trends and charts
-- [ ] Mobile-responsive improvements
-- [ ] Push notifications for low attendance alerts
+- Firebase Realtime Database integration for shared data
+- Username-based login system with SHA-256 password hashing
+- Role-based permissions (Super Admin, Admin, User)
+- Future planning (next 2 months) with Planning to Come, Leave, Exception
+- "Need to Attend" stat tile with motivational message on 60% completion
+- Remember Me functionality
+- Visibility toggle (admin controls who sees what)
+- Soft-delete with restore for team members
+- Dark/Light theme toggle
+- Sortable summary table
+- Leave types: Present, WFH, WFH Email, Leave, Exception, Planning to Come
+- Holiday management with current month highlighting
+- Monthly Dashboard Report (HTML email format)

@@ -1,90 +1,152 @@
 # Deploying Attendance Tracker to Microsoft Teams
 
-## Your Code Repository
+## Code Repository
 
-**Code is hosted at:** `code.saba.com` (internal Git)
-
----
-
-## Hosting Options
-
-Since SharePoint personal OneDrive downloads HTML files instead of rendering them, you need to host the app on a web server. Here are your options:
-
-### Option A: GitLab/GitHub Pages on code.saba.com
-
-If `code.saba.com` supports Pages (GitLab Pages or similar):
-
-1. Go to your repository on `code.saba.com`
-2. Enable **Pages** in the repository settings
-3. Set the source to the root directory (where `index.html` is)
-4. Your app will be available at a URL like: `https://agurav.code.saba.com/attendance-tracker-app/` (exact format depends on your setup)
-5. Use that URL as a Website tab in Teams
-
-### Option B: Use any internal web server
-
-If your org has an internal web server (IIS, Apache, Nginx):
-
-1. Clone the repo on the server
-2. Point the server to serve the files
-3. Use the server URL in Teams
-
-### Option C: Use SharePoint Team Site (not personal OneDrive)
-
-1. Ask your SharePoint admin to create a Team Site
-2. Upload files to the Team Site's document library
-3. Create a SharePoint Page → add "Embed" web part → paste the URL
+**Code:** `https://code.saba.com/users/agurav/repos/attendance-tracker/`  
+**Live App:** Your GitHub Pages URL
 
 ---
 
-## Adding to Microsoft Teams
+## Hosting
 
-Once you have a working URL that renders the app in browser:
+The app is hosted on **GitHub Pages** — a free static site hosting service.
+
+### Setup (already done)
+1. Code pushed to GitHub
+2. Pages enabled in Settings → Deploy from branch (main, root)
+3. App accessible at the GitHub Pages URL
+
+---
+
+## Microsoft Teams Integration
 
 1. Open **Microsoft Teams**
 2. Go to the **channel** where your team collaborates
-3. Click the **"+"** button at the top (next to existing tabs)
-4. Search for and select **"Website"** (or "Webpage")
-5. Give it a name: `Attendance Tracker`
-6. Paste the hosted URL
+3. Click the **"+"** button at the top
+4. Select **"Website"**
+5. Name: `Attendance Tracker`
+6. URL: Your GitHub Pages URL
 7. Click **Save**
 
 ---
 
-## Data Sharing Workflow
+## Firebase (Backend Database)
 
-Since each person's attendance data is stored in their browser's localStorage, use this workflow to share/sync data:
+All data is stored in **Firebase Realtime Database**. The app connects automatically — no server to manage.
 
-### For the Team Admin (e.g., Akshay):
-1. Mark attendance for all members throughout the month
-2. Click **🔄 Sync to Teams** → **Share to Team** to download the JSON
-3. Share the downloaded `.json` file in the Teams channel (Files tab or chat)
+### Firebase Project
+- **Console:** [https://console.firebase.google.com/](https://console.firebase.google.com/) → Project: `attendance-tracker-dca2b`
+- **Database URL:** `https://attendance-tracker-dca2b-default-rtdb.asia-southeast1.firebasedatabase.app`
+- **Region:** Asia Southeast 1
 
-### For Team Members:
-1. Download the latest `.json` file from the Teams channel
-2. Open the Attendance Tracker tab
-3. Click **🔄 Sync to Teams** → **Import from Team** and select the file
-4. Their view will now show all the latest data
+### Database Rules (current)
+```json
+{
+  "rules": {
+    ".read": "now < 1787250600000",
+    ".write": "now < 1787250600000"
+  }
+}
+```
+> ⚠️ These rules expire on **August 21, 2026**. After that date, update them in Firebase Console → Realtime Database → Rules tab.
+
+### What's stored in Firebase
+| Node | Content |
+|------|---------|
+| `appData` | Attendance records, holidays, leaves |
+| `teamMembers` | Active team members list |
+| `admins` | Admin members list |
+| `users` | User accounts (name, username, password hash, roles, status) |
+| `settings` | App settings (visibility toggle) |
+
+### Firebase Config (in `firebase-config.js`)
+```javascript
+const firebaseConfig = {
+    apiKey: "AIzaSyClCYh21_u4LTnlIP9tl0ahHrVQEvvFIgM",
+    authDomain: "attendance-tracker-dca2b.firebaseapp.com",
+    projectId: "attendance-tracker-dca2b",
+    storageBucket: "attendance-tracker-dca2b.firebasestorage.app",
+    messagingSenderId: "1073028755352",
+    appId: "1:1073028755352:web:ee8a2f917970f21c8045ed",
+    databaseURL: "https://attendance-tracker-dca2b-default-rtdb.asia-southeast1.firebasedatabase.app"
+};
+```
+
+### Connection Status
+The app shows a connection indicator next to "Attendance Tracker":
+- **🟢 Synced** — Connected to Firebase, data saves in real-time
+- **🔴 Offline** — No connection, data saves to localStorage only
 
 ---
 
-## Tips
+## First Time Setup
 
-- **Bookmark the Teams tab** for quick access
-- **Pin the tab** in Teams so it appears first for everyone
-- **Set a recurring Teams reminder** on the 20th and last day of each month to send the **📊 Monthly Report**
-- Each team member can also use the app independently and only sync when needed
+1. **Super Admin** (Akshay Gurav) opens the app first
+2. Login with username `agurav` or `Akshay Gurav` + set any password
+3. Share the app URL with team members
+4. Each member clicks **"Register here"** → enters full name + creates password
+5. Username is auto-generated (shown after login)
+6. Admin enables **"Everyone sees everyone's data"** toggle in Manage Team if needed
 
 ---
 
-## Quick Start Checklist
+## User Onboarding Guide (Share with team)
 
-- [ ] Push code to `code.saba.com`
-- [ ] Enable Pages or deploy to an internal web server
-- [ ] Verify the app loads in browser at the hosted URL
-- [ ] Share access with team members
-- [ ] Add as a Website tab in your Teams channel
-- [ ] Test: Open the tab and mark one day as present
-- [ ] Use **🔄 Sync to Teams** button to share data with the team
+1. Open the Attendance Tracker URL
+2. Click **"Register here"**
+3. Enter your **full name** (e.g., Krutik Arekar)
+4. Create a **password** (min 4 characters)
+5. Confirm password → Click Register
+6. You're in! Your username (e.g., `karekar`) is shown in the top-right
+7. Mark your attendance by clicking days on the calendar
+8. Check "Remember me" on login to save your credentials
+
+---
+
+## Password Policy
+
+| Scenario | Password |
+|----------|----------|
+| New registration | User creates their own |
+| Admin resets | Resets to `Temp@123` |
+| After restore | User prompted to set new password on next login |
+| Change password | Click 🔑 in top-right (requires old password) |
+
+---
+
+## Admin Responsibilities
+
+- Add new team members (Manage Team → type name → Add)
+- Remove terminated members (they can be restored later)
+- Reset forgotten passwords (🔑 icon → resets to `Temp@123`)
+- Manage holidays (add/remove from Holidays view)
+- Toggle data visibility for team
+- Generate monthly reports
+- Promote/demote other admins (super admin only)
+
+---
+
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| App shows blank | Hard refresh (Ctrl+Shift+R). Check internet connection. |
+| "Username not found" | User hasn't registered yet. Click "Register here". |
+| "Account terminated" | Admin needs to restore the user in Manage Team. |
+| Data not syncing | Check 🟢/🔴 indicator next to "Attendance Tracker" |
+| Can't see team members | Admin needs to enable visibility toggle |
+| Password forgotten | Admin resets to `Temp@123` |
+
+---
+
+## Quick Reference
+
+- **Login:** Type username (e.g., `agurav`) + password
+- **Mark attendance:** Click a day (current month)
+- **Plan future:** Navigate to next month → click day → select option
+- **Change password:** Top-right → 🔑 Password
+- **Logout:** Top-right → ⇄ Logout
+- **Admin panel:** Manage Team view (admin only)
 
 ---
 
