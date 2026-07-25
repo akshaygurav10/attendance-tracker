@@ -255,11 +255,20 @@ class AttendanceData {
 
     saveToFirebase() {
         if (typeof database !== 'undefined') {
-            // Firebase doesn't allow . $ # [ ] / in keys
-            // Encode member names that contain these characters
+            // Guard: never overwrite with empty data if we haven't loaded from Firebase yet
+            if (!this.firebaseReady) return;
+            
+            // Guard: don't save if attendance is empty and we expect data
+            const hasData = this.data.attendance && Object.keys(this.data.attendance).length > 0;
+            const hasHolidays = this.data.holidays && this.data.holidays.length > 0;
+            if (!hasData && !hasHolidays && this.firebaseReady) {
+                // Only save if explicitly intended (not accidental wipe)
+                console.warn('Skipping Firebase save: data appears empty');
+                return;
+            }
+
             const sanitized = JSON.parse(JSON.stringify(this.data));
             
-            // Sanitize attendance keys
             if (sanitized.attendance) {
                 const cleanAttendance = {};
                 for (const key in sanitized.attendance) {
@@ -268,7 +277,6 @@ class AttendanceData {
                 sanitized.attendance = cleanAttendance;
             }
             
-            // Sanitize leaves keys
             if (sanitized.leaves) {
                 const cleanLeaves = {};
                 for (const key in sanitized.leaves) {
@@ -315,7 +323,8 @@ class AttendanceData {
             { date: "2026-11-27", name: "Guru Nanak Jayanti" },
             { date: "2026-12-25", name: "Christmas" }
         ];
-        this.save();
+        // Only save to localStorage, not Firebase (prevents overwriting team data)
+        localStorage.setItem('attendance_tracker_data', JSON.stringify(this.data));
     }
 
     markAttendance(member, date, present) {
