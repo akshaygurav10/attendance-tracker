@@ -59,18 +59,8 @@ All data is stored in **Firebase Realtime Database**. The app connects automatic
 | `users` | User accounts (name, username, password hash, roles, status) |
 | `settings` | App settings (visibility toggle) |
 
-### Firebase Config (in `firebase-config.js`)
-```javascript
-const firebaseConfig = {
-    apiKey: "AIzaSyClCYh21_u4LTnlIP9tl0ahHrVQEvvFIgM",
-    authDomain: "attendance-tracker-dca2b.firebaseapp.com",
-    projectId: "attendance-tracker-dca2b",
-    storageBucket: "attendance-tracker-dca2b.firebasestorage.app",
-    messagingSenderId: "1073028755352",
-    appId: "1:1073028755352:web:ee8a2f917970f21c8045ed",
-    databaseURL: "https://attendance-tracker-dca2b-default-rtdb.asia-southeast1.firebasedatabase.app"
-};
-```
+### Firebase Config
+The Firebase configuration is in `firebase-config.js`. This file contains the API keys and database URL needed to connect to the Firebase backend. These keys are safe to expose in client-side code (Firebase restricts access via database rules, not API keys).
 
 ### Connection Status
 The app shows a connection indicator next to "Attendance Tracker":

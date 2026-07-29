@@ -242,17 +242,7 @@ Need to Attend = Required (60% of Working Days) - Days Attended
 ## Firebase Setup
 
 ### Configuration
-```javascript
-const firebaseConfig = {
-    apiKey: "AIzaSyClCYh21_u4LTnlIP9tl0ahHrVQEvvFIgM",
-    authDomain: "attendance-tracker-dca2b.firebaseapp.com",
-    projectId: "attendance-tracker-dca2b",
-    storageBucket: "attendance-tracker-dca2b.firebasestorage.app",
-    messagingSenderId: "1073028755352",
-    appId: "1:1073028755352:web:ee8a2f917970f21c8045ed",
-    databaseURL: "https://attendance-tracker-dca2b-default-rtdb.asia-southeast1.firebasedatabase.app"
-};
-```
+Firebase config is stored in `firebase-config.js`. See that file for the full configuration object. These keys are safe in client-side code — access is restricted by Firebase database rules, not API keys.
 
 ### Database Rules
 ```json

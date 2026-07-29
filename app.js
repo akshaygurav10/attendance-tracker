@@ -428,7 +428,7 @@ class AttendanceData {
             const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
             if (!this.isWeekend(dateStr) && !this.isHoliday(dateStr)) {
                 const leaveType = this.getLeaveType(member, dateStr);
-                if (leaveType === 'leave' || leaveType === 'exception' || leaveType === 'wfh' || leaveType === 'wfh-email') {
+                if (leaveType === 'leave' || leaveType === 'exception' || leaveType === 'wfh-email') {
                     continue;
                 }
                 workingDays++;
@@ -1041,7 +1041,7 @@ class App {
                 } else if (leaveType === 'wfh') {
                     classes.push('wfh');
                     statusIcon = '🏠';
-                    title = 'Work From Home (not counted as working day)';
+                    title = 'Work From Home';
                 } else if (leaveType === 'wfh-email') {
                     classes.push('wfh-email');
                     statusIcon = '📧';
