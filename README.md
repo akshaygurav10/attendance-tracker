@@ -47,11 +47,11 @@ A real-time team attendance tracking app with role-based access, Firebase sync, 
 |------|--------|
 | **User** | Edit own calendar, plan future, change password |
 | **Manager** | View all members of own team (read-only, incl. Summary). No edit of others, no Holidays / Manage Team |
-| **Admin** | + Edit all, manage team, holidays, reports, reset passwords (global) |
-| **Admin + Manager** | Union of both (Admin rules apply) |
-| **Super Admin** | + Create/rename/delete teams, assign teams, grant Manager/Admin; cannot be removed |
+| **Admin** | + Edit and manage members of **their own team only** (add/remove/rename/restore, reset passwords, Monthly Report, export). No Holidays by default (`ADMIN_CAN_EDIT_HOLIDAYS`), no visibility toggle, no import |
+| **Admin + Manager** | Union of both, within their own team only |
+| **Super Admin** | Global: all teams. + Create/rename/delete teams, assign teams, grant Manager/Admin, Holidays, visibility toggle, import; cannot be removed |
 
-Users choose a team when registering. Existing users without a team show as "Unassigned" until the Super Admin assigns one. Role checks are client-side only; see the security rules notes in [DEPLOYMENT.md](DEPLOYMENT.md).
+Users choose a team when registering. Existing users without a team show as "Unassigned" until the Super Admin assigns one. An Admin with no team sees only themselves until the Super Admin assigns one. Role and team checks are client-side only and **Firebase rules are NOT deployed**, so anyone with the Firebase config can still read all data directly; see [DEPLOYMENT.md](DEPLOYMENT.md). Open question: should team Admins edit the global holidays? (Default no; one-line flag in `app.js`.)
 
 ## Tech Stack
 
@@ -76,3 +76,15 @@ Users choose a team when registering. Existing users without a team show as "Una
 
 - [Full Documentation](DOCUMENTATION.md) — Features, architecture, troubleshooting
 - [Deployment Guide](DEPLOYMENT.md) — Setup, Teams integration, onboarding
+
+## Manual test checklist (team-scoped Admin)
+
+1. Team A Admin cannot see Team B members (sidebar, Summary, Manage Team, Monthly Report); heading shows their own team name.
+2. An Admin with no team sees only themselves and cannot add members.
+3. Direct function calls (browser console) on other-team members are rejected: `app.editMember`, `app.removeMember`, `app.resetPasswordForMember`, `app.data.markAttendance`.
+4. Admin-added members land in the Admin's own team.
+5. Super Admin still sees every team and `All Teams`.
+
+## Changelog
+
+- **2026-11-12:** Admin visibility is team-scoped (own team only). Holidays, the visibility toggle and import are Super Admin only. Details in [DOCUMENTATION.md](DOCUMENTATION.md) and [REQUIREMENTS-teams-roles.md](REQUIREMENTS-teams-roles.md).

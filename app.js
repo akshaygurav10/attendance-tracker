@@ -92,6 +92,10 @@ let TEAMS = {};         // teamId -> { id, name, createdBy, createdAt }
 let MEMBER_TEAMS = {};  // sanitized member name -> teamId
 let MANAGERS = [];      // full names with the Manager flag
 
+// Open question (see REQUIREMENTS-teams-roles.md): may team Admins edit the
+// GLOBAL holidays list? Default false = Superuser only. Flip to true to allow.
+let ADMIN_CAN_EDIT_HOLIDAYS = false;
+
 function nameKey(name) {
     return String(name).replace(/\./g, '___DOT___');
 }
@@ -124,11 +128,46 @@ function getTeamName(teamId) {
     return (teamId && TEAMS && TEAMS[teamId] && TEAMS[teamId].name) || null;
 }
 
-// Team label for the signed-in user: own team, 'All Teams' for admins, else 'No team'
+// Team label for the signed-in user: own team, 'All Teams' for the Superuser only, else 'No team'
 function getMyTeamLabel() {
     if (!getCurrentUser()) return '';
-    if (isAdmin()) return 'All Teams';
+    if (isSuperUser()) return 'All Teams';
     return getTeamName(getMyTeamId()) || 'No team';
+}
+
+// Admin who is not the Superuser: scoped to their own team
+function isTeamAdmin() {
+    return isAdmin() && !isSuperUser();
+}
+
+// Members the current user administers (edit/manage/report).
+// Superuser: everyone. Admin: self + own team (self only when unassigned).
+function getAdminScopeMembers() {
+    const user = getCurrentUser();
+    if (!user || !isAdmin()) return [];
+    if (isSuperUser()) return [...TEAM_MEMBERS];
+    const myTeam = getMyTeamId();
+    return TEAM_MEMBERS.filter(m => m === user || (!!myTeam && getMemberTeamId(m) === myTeam));
+}
+
+// May the current user administer this member? Checked by every action function.
+function canAdminMember(name) {
+    const user = getCurrentUser();
+    if (!name || !user) return false;
+    if (isSuperUser()) return true;
+    if (name === SUPER_ADMIN) return false;
+    if (!isAdmin()) return false;
+    if (name === user) return true;
+    const myTeam = getMyTeamId();
+    return !!myTeam && getMemberTeamId(name) === myTeam;
+}
+
+// May the current user administer members of this team id?
+function canAdminTeamId(teamId) {
+    if (isSuperUser()) return true;
+    if (!isAdmin()) return false;
+    const myTeam = getMyTeamId();
+    return !!teamId && !!myTeam && teamId === myTeam;
 }
 
 function everyoneSeesAllEnabled() {
@@ -136,14 +175,15 @@ function everyoneSeesAllEnabled() {
     return !!(toggle && toggle.checked);
 }
 
-// Members the current user may see. Admin: all. Manager: own team + self.
+// Members the current user may see. Superuser: all. Admin and Manager: own team + self.
 // Others: self, plus own team when "everyone sees everyone" is on.
+// A user with no team sees only themselves (never falls back to global).
 function getVisibleMembers() {
     const user = getCurrentUser();
     if (!user) return [];
-    if (isAdmin()) return [...TEAM_MEMBERS];
+    if (isSuperUser()) return [...TEAM_MEMBERS];
     const myTeam = getMyTeamId();
-    const teamScoped = !!myTeam && (isManager() || everyoneSeesAllEnabled());
+    const teamScoped = !!myTeam && (isAdmin() || isManager() || everyoneSeesAllEnabled());
     return TEAM_MEMBERS.filter(m => m === user || (teamScoped && getMemberTeamId(m) === myTeam));
 }
 
@@ -155,7 +195,8 @@ function canViewSummary() {
     return isAdmin() || isManager() || everyoneSeesAllEnabled();
 }
 
-function canManageHolidays() { return isAdmin(); }
+function canManageHolidays() { return isSuperUser() || (ADMIN_CAN_EDIT_HOLIDAYS && isAdmin()); }
+function canImportData() { return isSuperUser(); }
 function canManageTeam() { return isAdmin(); }
 function canUseReports() { return isAdmin(); }
 function canManageTeams() { return isSuperUser(); }
@@ -219,11 +260,10 @@ async function generateUniqueUsername(fullName) {
 }
 
 function canEdit(member) {
-    // Admin (incl. Superuser): anyone. Everyone else (Manager included): own data only.
+    // Superuser: anyone. Admin: own team. Everyone else (Manager included): own data only.
     const currentUser = getCurrentUser();
     if (!currentUser || !member) return false;
-    if (isAdmin()) return true;
-    return currentUser === member;
+    return currentUser === member || canAdminMember(member);
 }
 
 // ==========================================
@@ -509,7 +549,7 @@ class AttendanceData {
     }
 
     addHoliday(date, name) {
-        if (!canManageHolidays()) { denyAction('Only admins can manage holidays.'); return; }
+        if (!canManageHolidays()) { denyAction('You do not have permission to manage holidays.'); return; }
         if (!this.data.holidays.find(h => h.date === date)) {
             this.data.holidays.push({ date, name });
             this.data.holidays.sort((a, b) => a.date.localeCompare(b.date));
@@ -518,7 +558,7 @@ class AttendanceData {
     }
 
     removeHoliday(date) {
-        if (!canManageHolidays()) { denyAction('Only admins can manage holidays.'); return; }
+        if (!canManageHolidays()) { denyAction('You do not have permission to manage holidays.'); return; }
         this.data.holidays = this.data.holidays.filter(h => h.date !== date);
         this.save();
     }
@@ -590,12 +630,23 @@ class AttendanceData {
         return Math.round((attended / workingDays) * 100);
     }
 
-    exportJSON() {
-        return JSON.stringify(this.data, null, 2);
+    // memberFilter (array of names) limits attendance/leaves to those members; holidays are global
+    exportJSON(memberFilter) {
+        if (!Array.isArray(memberFilter)) return JSON.stringify(this.data, null, 2);
+        const pick = src => {
+            const out = {};
+            memberFilter.forEach(m => { if (src && src[m] !== undefined) out[m] = src[m]; });
+            return out;
+        };
+        return JSON.stringify({
+            ...this.data,
+            attendance: pick(this.data.attendance),
+            leaves: pick(this.data.leaves)
+        }, null, 2);
     }
 
     importJSON(jsonStr) {
-        if (!canUseReports()) { denyAction('Only admins can import data.'); return false; }
+        if (!canImportData()) { denyAction('Only the Superuser can import data.'); return false; }
         try {
             const imported = JSON.parse(jsonStr);
             if (imported.attendance && imported.holidays) {
@@ -1094,8 +1145,8 @@ class App {
     }
 
     async resetPasswordForMember(member) {
-        if (!isAdmin()) {
-            alert('Only admins can reset passwords.');
+        if (!isAdmin() || !canAdminMember(member)) {
+            alert('You can only reset passwords for members of your own team.');
             return;
         }
         const defaultPassword = 'Temp@123';
@@ -1163,13 +1214,13 @@ class App {
         show('btnTeamView', canManageTeam(), 'block');
         show('btnSyncTeams', canUseReports(), '');
         show('btnEmailReport', canUseReports(), '');
-        show('adminSettings', isAdmin(), 'block');
+        show('adminSettings', isSuperUser(), 'block');
         show('teamsAdmin', canManageTeams(), 'block');
         show('btnSummaryView', canViewSummary(), 'block');
+        show('syncImport', canImportData(), '');
     }
 
     updateUIPermissions() {
-        const admin = isAdmin();
         this.applyRoleVisibility();
         const summaryBtn = document.getElementById('btnSummaryView');
 
@@ -1249,8 +1300,8 @@ class App {
             const initials = member.split(' ').map(n => n[0]).join('').substring(0, 2);
             const isActive = member === this.selectedMember ? 'active' : '';
             const isMe = member === currentUser ? '<span class="me-tag">(You)</span>' : '';
-            // Admins see many teams, so tag each member with theirs
-            const teamTag = isAdmin()
+            // Only the Superuser sees many teams, so only they get a per-member team tag
+            const teamTag = isSuperUser()
                 ? ` <span class="member-team-tag">[${escapeHtml(getTeamName(getMemberTeamId(member)) || 'No team')}]</span>`
                 : '';
             return `<li class="${isActive}" data-member="${escapeHtml(member)}">
@@ -1690,11 +1741,15 @@ class App {
         const currentUserIsAdmin = isAdmin();
         const superUser = canAssignRoles();
         this.renderTeamsAdmin();
-        let html = TEAM_MEMBERS.map((member, i) => {
+        const scope = getAdminScopeMembers();
+        this.renderMemberTeamSelect();
+        let html = scope.map((member, i) => {
             const initials = member.split(' ').map(n => n[0]).join('').substring(0, 2);
             const memberIsAdmin = ADMIN_MEMBERS.includes(member);
             const memberIsManager = MANAGERS.includes(member);
             const isSuperAdmin = member === SUPER_ADMIN;
+            const isSelf = member === getCurrentUser();
+            const canAct = canAdminMember(member);
             const m = escapeHtml(member);
             const teamId = getMemberTeamId(member);
             const teamName = getTeamName(teamId);
@@ -1725,14 +1780,16 @@ class App {
                     ${roleControls}
                 </div>
                 <div class="team-member-actions">
-                    <button class="btn-edit" data-member="${m}" title="Edit name">✏️</button>
-                    ${currentUserIsAdmin ? `<button class="btn-reset-pw" data-member="${m}" title="Reset password">🔑</button>` : ''}
-                    <button class="btn-delete" data-member="${m}" title="Remove">Remove</button>
+                    ${canAct ? `<button class="btn-edit" data-member="${m}" title="Edit name">✏️</button>` : ''}
+                    ${canAct && !isSelf ? `<button class="btn-reset-pw" data-member="${m}" title="Reset password">🔑</button>` : ''}
+                    ${canAct && !isSelf && !isSuperAdmin ? `<button class="btn-delete" data-member="${m}" title="Remove">Remove</button>` : ''}
                 </div>
             </div>`;
         }).join('');
 
-        if (TEAM_MEMBERS.length === 0) {
+        if (isTeamAdmin() && !getMyTeamId()) {
+            html += '<p style="color: var(--text-secondary); padding: 20px;">You are not assigned to a team yet. Ask the Superuser to assign you.</p>';
+        } else if (scope.length === 0) {
             html = '<p style="color: var(--text-secondary); padding: 20px;">No team members added yet.</p>';
         }
 
@@ -1751,7 +1808,7 @@ class App {
                 const terminatedUsers = [];
                 for (const key in users) {
                     const user = users[key];
-                    if (user.terminated === true) {
+                    if (user.terminated === true && canAdminTeamId(user.teamId || MEMBER_TEAMS[key] || null)) {
                         terminatedUsers.push(user.name || key.replace(/___DOT___/g, '.'));
                     }
                 }
@@ -1782,12 +1839,12 @@ class App {
     setupDragDrop() {
         const list = document.getElementById('teamMemberList');
         let draggedItem = null;
-        let draggedIndex = -1;
+        let draggedMember = null;
 
         list.querySelectorAll('.team-member-item').forEach(item => {
             item.addEventListener('dragstart', (e) => {
                 draggedItem = item;
-                draggedIndex = parseInt(item.dataset.index);
+                draggedMember = item.dataset.member;
                 item.classList.add('dragging');
                 e.dataTransfer.effectAllowed = 'move';
             });
@@ -1814,13 +1871,8 @@ class App {
             item.addEventListener('drop', (e) => {
                 e.preventDefault();
                 item.classList.remove('drag-over');
-                const dropIndex = parseInt(item.dataset.index);
                 if (!canManageTeam()) { denyAction('Only admins can reorder the team.'); return; }
-                if (draggedIndex !== dropIndex && draggedIndex >= 0) {
-                    // Reorder array
-                    const movedMember = TEAM_MEMBERS.splice(draggedIndex, 1)[0];
-                    TEAM_MEMBERS.splice(dropIndex, 0, movedMember);
-                    saveTeamMembers(TEAM_MEMBERS);
+                if (this.reorderMembers(draggedMember, item.dataset.member)) {
                     this.renderTeamManagement();
                     this.renderTeamList();
                 }
@@ -1828,9 +1880,26 @@ class App {
         });
     }
 
+    // Move `dragged` to the position of `target` in the global roster; both must be in the actor's scope
+    reorderMembers(dragged, target) {
+        if (!canManageTeam()) { denyAction('Only admins can reorder the team.'); return false; }
+        if (!dragged || !target || dragged === target) return false;
+        if (!canAdminMember(dragged) || !canAdminMember(target)) {
+            denyAction('You can only reorder members of your own team.');
+            return false;
+        }
+        const from = TEAM_MEMBERS.indexOf(dragged);
+        const to = TEAM_MEMBERS.indexOf(target);
+        if (from < 0 || to < 0) return false;
+        TEAM_MEMBERS.splice(from, 1);
+        TEAM_MEMBERS.splice(to, 0, dragged);
+        saveTeamMembers(TEAM_MEMBERS);
+        return true;
+    }
+
     resetTeamToDefault() {
-        if (!isAdmin()) {
-            alert('⚠️ Only admins can reset the team list.');
+        if (!isSuperUser()) {
+            alert('⚠️ Only the Superuser can reset the team list.');
             return;
         }
         if (!confirm('Reset team list to the default members?\n\nThis will replace the current list. Attendance data is preserved.')) return;
@@ -1856,7 +1925,7 @@ class App {
         const has = ADMIN_MEMBERS.includes(member);
         if (makeAdmin === has) return true;
         const msg = makeAdmin
-            ? `Make "${member}" an admin?\n\nAdmins can edit everyone's attendance and manage the team.`
+            ? `Make "${member}" an admin?\n\nAdmins can edit attendance and manage members of their own team only.`
             : `Remove admin rights from "${member}"?`;
         if (!confirm(msg)) { this.renderTeamManagement(); return false; }
         ADMIN_MEMBERS = makeAdmin ? [...ADMIN_MEMBERS, member] : ADMIN_MEMBERS.filter(m => m !== member);
@@ -1991,14 +2060,42 @@ class App {
         this.updateThemeButton();
     }
 
-    async addMember(name) {
+    // Superuser-only team picker for the add-member form
+    renderMemberTeamSelect() {
+        const sel = document.getElementById('memberTeam');
+        if (!sel) return;
+        if (!isSuperUser()) { sel.style.display = 'none'; sel.innerHTML = ''; return; }
+        const prev = sel.value;
+        sel.innerHTML = ['<option value="">Unassigned</option>']
+            .concat(Object.keys(TEAMS).filter(id => TEAMS[id] && TEAMS[id].name).map(id =>
+                `<option value="${escapeHtml(id)}">${escapeHtml(TEAMS[id].name)}</option>`)).join('');
+        if (prev && TEAMS[prev]) sel.value = prev;
+        sel.style.display = '';
+    }
+
+    // Admin: the member is always created in the Admin's own team (teamId argument is ignored).
+    // Superuser: may pass a teamId; omitted means Unassigned.
+    async addMember(name, teamId) {
         if (!isAdmin()) {
             alert('⚠️ Only admins can add team members.');
             return;
         }
+        if (isTeamAdmin()) {
+            teamId = getMyTeamId();
+            if (!teamId) {
+                alert('⚠️ Ask the Superuser to assign you to a team first.');
+                return;
+            }
+        } else {
+            teamId = (teamId && TEAMS[teamId]) ? teamId : null;
+        }
         if (!name || name.trim() === '') return;
         name = name.trim();
         if (TEAM_MEMBERS.includes(name)) {
+            alert('⚠️ This member already exists!');
+            return;
+        }
+        if (name === SUPER_ADMIN) {
             alert('⚠️ This member already exists!');
             return;
         }
@@ -2009,6 +2106,12 @@ class App {
                 const sanitizedName = name.replace(/\./g, '___DOT___');
                 const snapshot = await database.ref('users/' + sanitizedName).once('value');
                 const userData = snapshot.val();
+                // A team Admin may not claim a person who already belongs to another team
+                const existingTeam = (userData && userData.teamId) || getMemberTeamId(name);
+                if (isTeamAdmin() && existingTeam && existingTeam !== teamId) {
+                    alert('⚠️ This person belongs to another team. Ask the Superuser to move them.');
+                    return;
+                }
                 if (userData && userData.terminated === true) {
                     if (confirm(`"${name}" is a terminated member. Do you want to restore them instead?`)) {
                         await this.restoreMember(name);
@@ -2023,6 +2126,17 @@ class App {
         // Add to team members — they can register themselves later
         TEAM_MEMBERS.push(name);
         saveTeamMembers(TEAM_MEMBERS);
+        if (teamId) {
+            // Record the team so the member is visible to (only) that team's Admins/Managers
+            const key = nameKey(name);
+            MEMBER_TEAMS[key] = teamId;
+            if (typeof database !== 'undefined') {
+                database.ref().update({
+                    ['users/' + key + '/teamId']: teamId,
+                    ['memberTeams/' + key]: teamId
+                });
+            }
+        }
         this.selectedMember = name;
         this.renderTeamList();
         this.renderTeamManagement();
@@ -2032,6 +2146,10 @@ class App {
     editMember(oldName) {
         if (!isAdmin()) {
             alert('⚠️ Only admins can edit team member names.');
+            return;
+        }
+        if (!canAdminMember(oldName)) {
+            alert('⚠️ You can only edit members of your own team.');
             return;
         }
         const newName = prompt(`Edit name for "${oldName}":`, oldName);
@@ -2068,6 +2186,14 @@ class App {
             alert('⚠️ Cannot remove the super admin.');
             return;
         }
+        if (!canAdminMember(name)) {
+            alert('⚠️ You can only remove members of your own team.');
+            return;
+        }
+        if (name === getCurrentUser()) {
+            alert('⚠️ You cannot remove yourself.');
+            return;
+        }
         if (!confirm(`Are you sure you want to remove "${name}" from the team?\n\nThey will be marked as terminated but can be restored later.`)) return;
 
         // Soft delete: mark as terminated in Firebase
@@ -2097,6 +2223,11 @@ class App {
 
     async restoreMember(name) {
         if (!canManageTeam()) { denyAction('Only admins can restore team members.'); return; }
+        // Terminated members keep their team record; no team => Superuser only
+        if (!canAdminTeamId(MEMBER_TEAMS[nameKey(name)] || null)) {
+            denyAction('You can only restore members of your own team.');
+            return;
+        }
 
         // Remove terminated flag and set mustResetPassword (Fix 1)
         const sanitizedName = name.replace(/\./g, '___DOT___');
@@ -2130,7 +2261,8 @@ class App {
 
     syncExport() {
         if (!canUseReports()) { denyAction('Only admins can export data.'); return; }
-        const json = this.data.exportJSON();
+        // Team Admins export only their own scope; Superuser exports everything
+        const json = this.data.exportJSON(isSuperUser() ? undefined : getAdminScopeMembers());
         const blob = new Blob([json], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -2146,7 +2278,7 @@ class App {
     }
 
     syncImport() {
-        if (!canUseReports()) { denyAction('Only admins can import data.'); return; }
+        if (!canImportData()) { denyAction('Only the Superuser can import data.'); return; }
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = '.json';
@@ -2175,6 +2307,7 @@ class App {
     // --- Monthly Dashboard Report ---
     generateDashboardReport() {
         if (!canUseReports()) return '';
+        const scope = getAdminScopeMembers();
         const monthNames = ["January", "February", "March", "April", "May", "June",
             "July", "August", "September", "October", "November", "December"];
 
@@ -2186,7 +2319,7 @@ class App {
         let totalAttended = 0;
         const memberData = [];
 
-        TEAM_MEMBERS.forEach(member => {
+        scope.forEach(member => {
             const attended = this.data.getAttendanceCount(member, this.currentYear, this.currentMonth);
             const percentage = this.data.getAttendancePercentage(member, this.currentYear, this.currentMonth);
             if (percentage >= REQUIRED_PERCENTAGE) compliantCount++;
@@ -2212,7 +2345,7 @@ class App {
             });
         }
 
-        const avgAttendance = workingDays > 0 ? Math.round((totalAttended / (TEAM_MEMBERS.length * workingDays)) * 100) : 0;
+        const avgAttendance = (workingDays > 0 && scope.length > 0) ? Math.round((totalAttended / (scope.length * workingDays)) * 100) : 0;
 
         const getArrow = (col) => {
             if (this.sortColumn === col) {
@@ -2230,7 +2363,7 @@ class App {
 
             <div class="report-kpis">
                 <div class="report-kpi">
-                    <span class="kpi-value blue">${TEAM_MEMBERS.length}</span>
+                    <span class="kpi-value blue">${scope.length}</span>
                     <span class="kpi-label">Team Members</span>
                 </div>
                 <div class="report-kpi">
@@ -2296,7 +2429,7 @@ class App {
 
             <div class="report-footer">
                 <span>Required: ${REQUIRED_PERCENTAGE}% (${Math.ceil(workingDays * REQUIRED_PERCENTAGE / 100)} days minimum)</span>
-                <span>Compliance: ${compliantCount}/${TEAM_MEMBERS.length} members</span>
+                <span>Compliance: ${compliantCount}/${scope.length} members</span>
                 <span>Report by: Attendance Tracker</span>
             </div>`;
 
@@ -2305,6 +2438,7 @@ class App {
 
     generateEmailHTML() {
         if (!canUseReports()) return '';
+        const scope = getAdminScopeMembers();
         const monthNames = ["January", "February", "March", "April", "May", "June",
             "July", "August", "September", "October", "November", "December"];
 
@@ -2316,7 +2450,7 @@ class App {
         let totalAttended = 0;
         const memberData = [];
 
-        TEAM_MEMBERS.forEach(member => {
+        scope.forEach(member => {
             const attended = this.data.getAttendanceCount(member, this.currentYear, this.currentMonth);
             const percentage = this.data.getAttendancePercentage(member, this.currentYear, this.currentMonth);
             if (percentage >= REQUIRED_PERCENTAGE) compliantCount++;
@@ -2324,7 +2458,7 @@ class App {
             memberData.push({ name: member, attended, percentage });
         });
 
-        const avgAttendance = workingDays > 0 ? Math.round((totalAttended / (TEAM_MEMBERS.length * workingDays)) * 100) : 0;
+        const avgAttendance = (workingDays > 0 && scope.length > 0) ? Math.round((totalAttended / (scope.length * workingDays)) * 100) : 0;
 
         let html = `<!DOCTYPE html>
 <html>
@@ -2352,7 +2486,7 @@ class App {
 <table width="100%" cellpadding="0" cellspacing="0">
 <tr>
 <td width="25%" style="text-align:center;padding:12px;background:#f8f9fa;border-radius:8px;">
-<div style="font-size:28px;font-weight:700;color:#0052CC;">${TEAM_MEMBERS.length}</div>
+<div style="font-size:28px;font-weight:700;color:#0052CC;">${scope.length}</div>
 <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:0.5px;margin-top:4px;">Team Members</div>
 </td>
 <td width="4%"></td>
@@ -2432,7 +2566,7 @@ ${m.percentage}%
 <table width="100%" cellpadding="0" cellspacing="0">
 <tr>
 <td style="font-size:11px;color:#888;">Required: ${REQUIRED_PERCENTAGE}% (${Math.ceil(workingDays * REQUIRED_PERCENTAGE / 100)} days minimum)</td>
-<td style="font-size:11px;color:#888;text-align:center;">Compliance: ${compliantCount}/${TEAM_MEMBERS.length} members</td>
+<td style="font-size:11px;color:#888;text-align:center;">Compliance: ${compliantCount}/${scope.length} members</td>
 <td style="font-size:11px;color:#888;text-align:right;">Report by: Attendance Tracker</td>
 </tr>
 </table>
@@ -2679,9 +2813,9 @@ ${m.percentage}%
         // Theme toggle
         document.getElementById('btnThemeToggle').addEventListener('click', () => this.toggleTheme());
 
-        // Visibility toggle (admin only)
+        // Visibility toggle (Superuser only: it is a global setting)
         document.getElementById('toggleVisibility').addEventListener('change', (e) => {
-            if (!isAdmin()) { e.target.checked = !e.target.checked; denyAction('Only admins can change this setting.'); return; }
+            if (!isSuperUser()) { e.target.checked = !e.target.checked; denyAction('Only the Superuser can change this setting.'); return; }
             if (typeof database !== 'undefined') {
                 database.ref('settings/everyoneSeesAll').set(e.target.checked);
             }
@@ -2700,7 +2834,7 @@ ${m.percentage}%
             const input = document.getElementById('memberName');
             const name = input.value;
             if (name && name.trim()) {
-                await this.addMember(name);
+                await this.addMember(name, (document.getElementById('memberTeam') || {}).value);
                 input.value = '';
             }
         });
@@ -2710,7 +2844,7 @@ ${m.percentage}%
                 const input = document.getElementById('memberName');
                 const name = input.value;
                 if (name && name.trim()) {
-                    await this.addMember(name);
+                    await this.addMember(name, (document.getElementById('memberTeam') || {}).value);
                     input.value = '';
                 }
             }
