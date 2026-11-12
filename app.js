@@ -153,7 +153,29 @@ class AttendanceData {
         this.onDataLoaded = onDataLoaded;
         this.data = this.getDefaultData();
         this.firebaseReady = false;
-        this.load();
+        this._listeners = [];
+        // Only touch stored/remote data when a user is signed in
+        if (getCurrentUser()) {
+            this.loadLocal();
+            this.startListeners();
+        }
+    }
+
+    // Track a realtime listener so it can be detached on logout
+    _listen(path, cb, errCb) {
+        const ref = database.ref(path);
+        if (errCb) ref.on('value', cb, errCb); else ref.on('value', cb);
+        this._listeners.push({ ref, cb });
+    }
+
+    stopListeners() {
+        this._listeners.forEach(l => l.ref.off('value', l.cb));
+        this._listeners = [];
+        this.firebaseReady = false;
+    }
+
+    reset() {
+        this.data = this.getDefaultData();
     }
 
     getDefaultData() {
@@ -165,7 +187,7 @@ class AttendanceData {
         };
     }
 
-    load() {
+    loadLocal() {
         // Load from localStorage first (immediate)
         const saved = localStorage.getItem('attendance_tracker_data');
         if (saved) {
@@ -177,10 +199,12 @@ class AttendanceData {
             this.data = this.getDefaultData();
             this.initDefaultHolidays();
         }
+    }
 
-        // Then sync with Firebase
-        if (typeof database !== 'undefined') {
-            database.ref('appData').on('value', (snapshot) => {
+    startListeners() {
+        // Sync with Firebase
+        if (typeof database !== 'undefined' && this._listeners.length === 0) {
+            this._listen('appData', (snapshot) => {
                 const firebaseData = snapshot.val();
                 if (firebaseData) {
                     // Decode sanitized keys back to original names
@@ -215,7 +239,7 @@ class AttendanceData {
             });
 
             // Sync team members
-            database.ref('teamMembers').on('value', (snapshot) => {
+            this._listen('teamMembers', (snapshot) => {
                 const members = snapshot.val();
                 if (members && Array.isArray(members)) {
                     TEAM_MEMBERS = members.filter(m => m && m.trim() !== '');
@@ -229,7 +253,7 @@ class AttendanceData {
             });
 
             // Sync admin list
-            database.ref('admins').on('value', (snapshot) => {
+            this._listen('admins', (snapshot) => {
                 const admins = snapshot.val();
                 if (admins && Array.isArray(admins)) {
                     ADMIN_MEMBERS = admins;
@@ -238,7 +262,7 @@ class AttendanceData {
             });
 
             // Sync visibility setting
-            database.ref('settings/everyoneSeesAll').on('value', (snapshot) => {
+            this._listen('settings/everyoneSeesAll', (snapshot) => {
                 const val = snapshot.val();
                 const toggle = document.getElementById('toggleVisibility');
                 if (toggle) toggle.checked = val === true;
@@ -248,6 +272,7 @@ class AttendanceData {
     }
 
     save() {
+        if (!getCurrentUser()) return;
         this.data.lastUpdated = new Date().toISOString();
         localStorage.setItem('attendance_tracker_data', JSON.stringify(this.data));
         this.saveToFirebase();
@@ -500,6 +525,7 @@ class App {
     }
 
     onDataUpdate() {
+        if (!getCurrentUser()) return;
         // Re-render when Firebase sends new data
         this.selectedMember = this.selectedMember || TEAM_MEMBERS[0];
         this.renderTeamList();
@@ -511,12 +537,104 @@ class App {
 
     init() {
         this.loadTheme();
-        this.showUserSelection();
-        this.renderTeamList();
-        this.renderCalendar();
-        this.bindEvents();
-        this.updateUIPermissions();
-        this.checkEmailReminder();
+        const currentUser = getCurrentUser();
+        if (currentUser && TEAM_MEMBERS.includes(currentUser)) {
+            this.unlockApp();
+            this.showUserSelection();
+            this.renderTeamList();
+            this.renderCalendar();
+            this.bindEvents();
+            this.updateUIPermissions();
+            this.checkEmailReminder();
+        } else {
+            // Not signed in (or stale session): show only the login view
+            this.bindEvents();
+            this.lockApp();
+        }
+    }
+
+    // Reveal the app for the signed-in user and start data sync
+    unlockApp() {
+        document.body.classList.remove('auth-locked');
+        this.data.loadLocal();
+        this.data.startListeners();
+    }
+
+    // Return to a clean logged-out state: nothing from the previous user remains
+    lockApp() {
+        document.body.classList.add('auth-locked');
+
+        // Stop realtime sync and drop in-memory data
+        this.data.stopListeners();
+        this.data.reset();
+        TEAM_MEMBERS = [];
+        ADMIN_MEMBERS = [SUPER_ADMIN];
+        this.selectedMember = '';
+        this.currentView = 'calendar';
+        this.sortColumn = null;
+        this.sortDirection = 'asc';
+
+        // Clear persisted personal data (keep theme and reminder_* flags)
+        [
+            'attendance_current_user', 'attendance_tracker_data', 'attendance_team_members',
+            'attendance_admin_list', 'attendance_remembered_user', 'attendance_remembered_pass'
+        ].forEach(k => localStorage.removeItem(k));
+        sessionStorage.clear();
+
+        // Remove transient UI and close app modals
+        const menu = document.getElementById('dayContextMenu');
+        if (menu) menu.remove();
+        ['syncModal', 'emailModal'].forEach(id => {
+            const m = document.getElementById(id);
+            if (m) m.classList.remove('active');
+        });
+
+        // Empty every container that renders attendance / user data
+        ['teamList', 'calendarGrid', 'attendanceStats', 'viewingInfo', 'summaryBody',
+         'holidayList', 'teamMemberList', 'reportDashboard', 'currentUserDisplay',
+         'currentMonthYear', 'summaryMonthYear', 'syncStatus'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = '';
+        });
+
+        // Reset to calendar view
+        document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+        document.querySelectorAll('.btn-sidebar').forEach(b => b.classList.remove('active'));
+        const cv = document.getElementById('calendarView');
+        if (cv) cv.classList.add('active');
+        const cb = document.getElementById('btnCalendarView');
+        if (cb) cb.classList.add('active');
+
+        // Clear all form fields and messages
+        ['loginUsername', 'loginPassword', 'registerName', 'registerPassword', 'registerConfirm',
+         'memberName', 'holidayDate', 'holidayName'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+        ['rememberMe', 'toggleVisibility'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.checked = false;
+        });
+        ['loginError', 'registerError'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = '';
+        });
+        ['loginPassword', 'registerPassword'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.type = 'password';
+        });
+        ['toggleLoginPw', 'toggleRegPw'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = '👁️';
+        });
+
+        // Show only the login panel
+        document.getElementById('loginForm').style.display = 'block';
+        document.getElementById('registerForm').style.display = 'none';
+        document.getElementById('forgotForm').style.display = 'none';
+        const title = document.getElementById('authModalTitle');
+        if (title) title.textContent = '🔐 Login';
+        document.getElementById('userModal').classList.add('active');
     }
 
     showUserSelection() {
@@ -546,6 +664,15 @@ class App {
         if (input) input.value = '';
     }
 
+    async refreshTeamMembers() {
+        if (typeof database === 'undefined') return;
+        const snap = await database.ref('teamMembers').once('value');
+        const members = snap.val();
+        if (members && Array.isArray(members)) {
+            TEAM_MEMBERS = members.filter(m => m && m.trim() !== '');
+        }
+    }
+
     async handleLogin() {
         const usernameInput = document.getElementById('loginUsername').value.trim();
         const password = document.getElementById('loginPassword').value;
@@ -558,6 +685,8 @@ class App {
 
         if (typeof database !== 'undefined') {
             try {
+                // Team list is not preloaded while logged out; fetch it so later saves don't overwrite it
+                await this.refreshTeamMembers();
                 // Look up user by username or full name
                 const usersSnapshot = await database.ref('users').once('value');
                 const users = usersSnapshot.val() || {};
@@ -679,6 +808,7 @@ class App {
             TEAM_MEMBERS.push(username);
             saveTeamMembers(TEAM_MEMBERS);
         }
+        this.unlockApp();
         document.getElementById('userModal').classList.remove('active');
         document.getElementById('loginPassword').value = '';
         this.updateUserDisplay();
@@ -719,6 +849,7 @@ class App {
             });
 
             // Add to team members if not already there
+            await this.refreshTeamMembers();
             if (!TEAM_MEMBERS.includes(name)) {
                 TEAM_MEMBERS.push(name);
                 saveTeamMembers(TEAM_MEMBERS);
@@ -729,6 +860,7 @@ class App {
         errorEl.textContent = '';
         localStorage.setItem('attendance_current_user', name);
         this.selectedMember = name;
+        this.unlockApp();
         document.getElementById('userModal').classList.remove('active');
         document.getElementById('registerName').value = '';
         document.getElementById('registerPassword').value = '';
@@ -759,6 +891,7 @@ class App {
             const sanitizedName = user.replace(/\./g, '___DOT___');
             if (typeof database !== 'undefined') {
                 database.ref('users/' + sanitizedName + '/username').once('value').then((snapshot) => {
+                    if (getCurrentUser() !== user) return;
                     const uname = snapshot.val() || user;
                     display.innerHTML = `
                         <span class="user-display-name">${uname}${badge}</span>
@@ -786,15 +919,7 @@ class App {
 
     bindUserDisplayEvents(display) {
         document.getElementById('btnLogout').onclick = () => {
-            localStorage.removeItem('attendance_current_user');
-            document.getElementById('userModal').classList.add('active');
-            document.getElementById('loginForm').style.display = 'block';
-            document.getElementById('registerForm').style.display = 'none';
-            document.getElementById('forgotForm').style.display = 'none';
-            document.getElementById('loginError').textContent = '';
-            document.getElementById('loginPassword').value = '';
-            this.populateLoginDropdown();
-            display.innerHTML = '';
+            this.lockApp();
         };
         document.getElementById('btnChangePassword').onclick = () => {
             this.changeOwnPassword();
@@ -829,6 +954,7 @@ class App {
         // Load visibility toggle state from Firebase
         if (typeof database !== 'undefined') {
             database.ref('settings/everyoneSeesAll').once('value').then((snapshot) => {
+                if (!getCurrentUser()) return;
                 const val = snapshot.val();
                 const toggle = document.getElementById('toggleVisibility');
                 if (toggle) toggle.checked = val === true;
@@ -1989,6 +2115,7 @@ ${m.percentage}%
 
     // --- Email Reminder Check ---
     checkEmailReminder() {
+        if (!getCurrentUser()) return;
         const today = new Date();
         const day = today.getDate();
         const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
@@ -1997,6 +2124,7 @@ ${m.percentage}%
             const reminderKey = `reminder_${today.getFullYear()}_${today.getMonth()}_${day}`;
             if (!localStorage.getItem(reminderKey)) {
                 setTimeout(() => {
+                    if (!getCurrentUser()) return;
                     if (confirm('📧 Reminder: Today is a report submission day (20th or last day of month).\n\nWould you like to generate the attendance report now?')) {
                         this.showEmailModal();
                     }
@@ -2062,6 +2190,14 @@ ${m.percentage}%
             document.getElementById('registerForm').style.display = 'none';
             document.getElementById('forgotForm').style.display = 'none';
             document.getElementById('authModalTitle').textContent = '🔐 Login';
+        });
+
+        // Logout in another tab (or cleared storage) locks this tab too
+        window.addEventListener('storage', (e) => {
+            if (e.key === 'attendance_current_user' && !e.newValue) this.lockApp();
+        });
+        window.addEventListener('pageshow', (e) => {
+            if (e.persisted && !getCurrentUser()) this.lockApp();
         });
 
         // Close user modal with escape or close button (only if already logged in)

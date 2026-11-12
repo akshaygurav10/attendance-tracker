@@ -553,6 +553,18 @@ body {
     display: flex;
 }
 
+/* Logged-out state: only the login view exists; app content is not rendered */
+body.auth-locked .app-container,
+body.auth-locked #syncModal,
+body.auth-locked #emailModal,
+body.auth-locked .day-context-menu {
+    display: none !important;
+}
+
+body.auth-locked #userModal {
+    background: var(--bg-primary);
+}
+
 .modal-content {
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
