@@ -76,6 +76,7 @@ Users choose a team when registering. Existing users without a team show as "Una
 
 - [Full Documentation](DOCUMENTATION.md) — Features, architecture, troubleshooting
 - [Deployment Guide](DEPLOYMENT.md) — Setup, Teams integration, onboarding
+- [Future Enhancements](FUTURE-ENHANCEMENTS.md) — Planned work, starting with server-side data isolation between teams
 
 ## Manual test checklist (team-scoped Admin)
 
