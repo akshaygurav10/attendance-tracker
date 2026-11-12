@@ -56,8 +56,62 @@ All data is stored in **Firebase Realtime Database**. The app connects automatic
 | `appData` | Attendance records, holidays, leaves |
 | `teamMembers` | Active team members list |
 | `admins` | Admin members list |
-| `users` | User accounts (name, username, password hash, roles, status) |
+| `managers` | Members with the Manager flag (mirror of `users/*/isManager`) |
+| `teams` | `{teamId: {id, name, createdBy, createdAt}}`. Read before login to fill the team picker (names only) |
+| `memberTeams` | `{memberKey: teamId}` (mirror of `users/*/teamId`; `.` in names is stored as `___DOT___`) |
+| `users` | User accounts (name, username, password hash, roles, `teamId`, status) |
 | `settings` | App settings (visibility toggle) |
+
+Teams, Manager and Admin flags are written only by the Superuser's UI. Existing data needs no migration: users with no `teamId` show as "Unassigned".
+
+### Recommended security rules (NOT deployed, NOT active)
+
+> ⚠️ **Client-side checks alone are not secure.** The current rules are open, there is no Firebase Authentication, and `appData` is one blob that every client downloads. Anyone with the Firebase config can read or write any path directly, so the Manager/Admin/team restrictions in the UI only stop honest use. Nothing below has been applied to this project.
+
+Real enforcement needs (1) Firebase Authentication, with custom claims set by a trusted backend (`superuser: true`, `admin: true`, `manager: true`, `teamId: "<id>"`), and (2) splitting `appData` so attendance is stored per member (for example `attendance/{memberKey}` with a `teamId` field), because rules cannot filter inside a single blob. A starting point once those exist:
+
+```json
+{
+  "rules": {
+    "teams": {
+      ".read": true,
+      "$teamId": { ".write": "auth.token.superuser === true" }
+    },
+    "memberTeams": {
+      ".read": "auth != null",
+      ".write": "auth.token.superuser === true"
+    },
+    "managers": {
+      ".read": "auth != null",
+      ".write": "auth.token.superuser === true"
+    },
+    "admins": {
+      ".read": "auth != null",
+      ".write": "auth.token.superuser === true"
+    },
+    "users": {
+      "$memberKey": {
+        ".read": "auth.token.superuser === true || auth.token.name === $memberKey",
+        "teamId":    { ".write": "auth.token.superuser === true" },
+        "isManager": { ".write": "auth.token.superuser === true" },
+        "isAdmin":   { ".write": "auth.token.superuser === true" }
+      }
+    },
+    "attendanceByMember": {
+      "$memberKey": {
+        ".read": "auth.token.admin === true || auth.token.superuser === true || auth.token.name === $memberKey || (auth.token.manager === true && data.child('teamId').val() === auth.token.teamId)",
+        ".write": "auth.token.admin === true || auth.token.superuser === true || auth.token.name === $memberKey"
+      }
+    },
+    "holidays": {
+      ".read": "auth != null",
+      ".write": "auth.token.admin === true || auth.token.superuser === true"
+    }
+  }
+}
+```
+
+Notes: `attendanceByMember` and `auth.token.*` claims do not exist in the app today; this snippet is a design target, not a drop-in replacement. If `teams` is later made non-public, the pre-login team picker will be empty. Then users should choose their team after first login (the Superuser can always assign it). Note too that a Superuser-assigned Manager flag on a name that has not registered yet will apply to whoever registers that name first. Register those users before flagging them.
 
 ### Firebase Config
 The Firebase configuration is in `firebase-config.js`. This file contains the API keys and database URL needed to connect to the Firebase backend. These keys are safe to expose in client-side code (Firebase restricts access via database rules, not API keys).

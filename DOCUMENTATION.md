@@ -56,7 +56,7 @@ A real-time team attendance tracking application with a Jira-style dark/light UI
 - **Edit names** — Click ✏️ to rename (data transfers to new name)
 - **Drag to reorder** — Drag the ☰ handle to rearrange member order
 - **Restore terminated** — Admin can restore deleted members with password reset
-- **Make/Remove Admin** — Super admin can promote/demote admins
+- **Admin / Manager / Team roles** — only the Super admin can promote/demote admins, set Managers and assign teams
 - **Reset password** — Admin clicks 🔑 → password resets to `Temp@123`
 
 ### Reports (Admin only)
@@ -93,7 +93,8 @@ A real-time team attendance tracking application with a Jira-style dark/light UI
 - Cannot be removed as admin
 - Can edit everyone's attendance
 - Can add/remove/edit team members
-- Can make/remove other admins
+- Only role that can create, rename and delete **teams** (Manage Team → Teams)
+- Only role that can assign a user's team after registration and grant/revoke **Manager** and **Admin**
 - Can reset passwords (to `Temp@123`)
 - Can manage holidays
 - Can toggle visibility settings
@@ -105,7 +106,24 @@ A real-time team attendance tracking application with a Jira-style dark/light UI
 - Can add/remove/edit team members
 - Can reset passwords
 - Can manage holidays
-- Cannot remove other admins (only super admin can)
+- Cannot grant or remove Admin/Manager roles or change teams (Super Admin only)
+- Global scope: not limited to a team
+
+### Manager (assigned by Super Admin)
+- Sees the attendance and Summary of **all members of their own team**, read-only
+- Cannot see other teams' members or unassigned users
+- Cannot edit other members' attendance, and has no Holidays, Manage Team, Sync or Monthly Report
+- Edits their own attendance like a regular user
+- A user can be **Admin + Manager**: they get everything an Admin can do (Admin rules win)
+
+### Teams
+- Super Admin creates teams. New users pick a team on the Register form (required once teams exist); the login form only fills a team for users who have none yet
+- The team picker lists team names only; no attendance or user data is loaded before login
+- Existing users with no team are "Unassigned" (they see only themselves) until the Super Admin assigns one
+- Deleting a team makes its members Unassigned; no users or attendance are deleted
+- When "Everyone sees everyone's data" is on, non-admins now see only their own team
+
+> Permission checks run in the browser. Without Firebase Authentication and matching database rules they do not stop someone calling Firebase directly. See *Recommended security rules* in DEPLOYMENT.md.
 
 ### Regular User
 - Can only edit their own attendance
@@ -195,6 +213,9 @@ attendance-tracker-app/
   },
   "teamMembers": ["Akshay Gurav", "Krutik Arekar"],
   "admins": ["Akshay Gurav"],
+  "managers": ["Krutik Arekar"],
+  "teams": { "-Nabc123": { "id": "-Nabc123", "name": "Platform", "createdBy": "Akshay Gurav", "createdAt": "2026-08-01T09:00:00Z" } },
+  "memberTeams": { "Krutik Arekar": "-Nabc123" },
   "users": {
     "Akshay Gurav": {
       "name": "Akshay Gurav",

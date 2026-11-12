@@ -44,8 +44,12 @@ A real-time team attendance tracking app with role-based access, Firebase sync, 
 | Role | Can do |
 |------|--------|
 | **User** | Edit own calendar, plan future, change password |
-| **Admin** | + Edit all, manage team, holidays, reports, reset passwords |
-| **Super Admin** | + Make/remove admins, cannot be removed |
+| **Manager** | View all members of own team (read-only, incl. Summary). No edit of others, no Holidays / Manage Team |
+| **Admin** | + Edit all, manage team, holidays, reports, reset passwords (global) |
+| **Admin + Manager** | Union of both (Admin rules apply) |
+| **Super Admin** | + Create/rename/delete teams, assign teams, grant Manager/Admin; cannot be removed |
+
+Users choose a team when registering. Existing users without a team show as "Unassigned" until the Super Admin assigns one. Role checks are client-side only; see the security rules notes in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Tech Stack
 

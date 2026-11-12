@@ -83,6 +83,81 @@ function isAdmin() {
     return ADMIN_MEMBERS.includes(user);
 }
 
+// ------------------------------------------
+// Teams / Manager role (in-memory, synced from Firebase, cleared on logout)
+// NOTE: these checks run in the browser only. See DEPLOYMENT.md for the
+// database rules needed for real enforcement.
+// ------------------------------------------
+let TEAMS = {};         // teamId -> { id, name, createdBy, createdAt }
+let MEMBER_TEAMS = {};  // sanitized member name -> teamId
+let MANAGERS = [];      // full names with the Manager flag
+
+function nameKey(name) {
+    return String(name).replace(/\./g, '___DOT___');
+}
+
+function escapeHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function isSuperUser() {
+    return getCurrentUser() === SUPER_ADMIN;
+}
+
+function isManager() {
+    const user = getCurrentUser();
+    return !!user && Array.isArray(MANAGERS) && MANAGERS.includes(user);
+}
+
+function getMemberTeamId(name) {
+    if (!name) return null;
+    return (MEMBER_TEAMS && MEMBER_TEAMS[nameKey(name)]) || null;
+}
+
+function getMyTeamId() {
+    return getMemberTeamId(getCurrentUser());
+}
+
+function getTeamName(teamId) {
+    return (teamId && TEAMS && TEAMS[teamId] && TEAMS[teamId].name) || null;
+}
+
+function everyoneSeesAllEnabled() {
+    const toggle = document.getElementById('toggleVisibility');
+    return !!(toggle && toggle.checked);
+}
+
+// Members the current user may see. Admin: all. Manager: own team + self.
+// Others: self, plus own team when "everyone sees everyone" is on.
+function getVisibleMembers() {
+    const user = getCurrentUser();
+    if (!user) return [];
+    if (isAdmin()) return [...TEAM_MEMBERS];
+    const myTeam = getMyTeamId();
+    const teamScoped = !!myTeam && (isManager() || everyoneSeesAllEnabled());
+    return TEAM_MEMBERS.filter(m => m === user || (teamScoped && getMemberTeamId(m) === myTeam));
+}
+
+function canViewMember(name) {
+    return !!name && getVisibleMembers().includes(name);
+}
+
+function canViewSummary() {
+    return isAdmin() || isManager() || everyoneSeesAllEnabled();
+}
+
+function canManageHolidays() { return isAdmin(); }
+function canManageTeam() { return isAdmin(); }
+function canUseReports() { return isAdmin(); }
+function canManageTeams() { return isSuperUser(); }
+function canAssignRoles() { return isSuperUser(); }
+
+function denyAction(message) {
+    alert('⚠️ ' + message);
+}
+
 // ==========================================
 // USERNAME GENERATION (Fix 5)
 // ==========================================
@@ -137,10 +212,10 @@ async function generateUniqueUsername(fullName) {
 }
 
 function canEdit(member) {
-    const currentUser = localStorage.getItem('attendance_current_user');
-    if (!currentUser) return false;
-    const isAdminUser = ADMIN_MEMBERS.indexOf(currentUser) !== -1 || currentUser === SUPER_ADMIN;
-    if (isAdminUser) return true;
+    // Admin (incl. Superuser): anyone. Everyone else (Manager included): own data only.
+    const currentUser = getCurrentUser();
+    if (!currentUser || !member) return false;
+    if (isAdmin()) return true;
     return currentUser === member;
 }
 
@@ -258,7 +333,25 @@ class AttendanceData {
                 if (admins && Array.isArray(admins)) {
                     ADMIN_MEMBERS = admins;
                     localStorage.setItem('attendance_admin_list', JSON.stringify(admins));
+                    if (this.onDataLoaded) this.onDataLoaded();
                 }
+            });
+
+            // Sync teams, member->team mirror and manager flags
+            this._listen('teams', (snapshot) => {
+                const val = snapshot.val();
+                TEAMS = (val && typeof val === 'object') ? val : {};
+                if (this.onDataLoaded) this.onDataLoaded();
+            });
+            this._listen('memberTeams', (snapshot) => {
+                const val = snapshot.val();
+                MEMBER_TEAMS = (val && typeof val === 'object') ? val : {};
+                if (this.onDataLoaded) this.onDataLoaded();
+            });
+            this._listen('managers', (snapshot) => {
+                const val = snapshot.val();
+                MANAGERS = Array.isArray(val) ? val.filter(m => m) : [];
+                if (this.onDataLoaded) this.onDataLoaded();
             });
 
             // Sync visibility setting
@@ -353,6 +446,7 @@ class AttendanceData {
     }
 
     markAttendance(member, date, present) {
+        if (!canEdit(member)) { denyAction('You do not have permission to edit this member\'s attendance.'); return; }
         if (!this.data.attendance) this.data.attendance = {};
         if (!this.data.attendance[member]) {
             this.data.attendance[member] = {};
@@ -376,6 +470,7 @@ class AttendanceData {
     // --- Leave / Exception / WFH ---
     markLeave(member, date, type) {
         // type: "leave", "wfh", "exception"
+        if (!canEdit(member)) { denyAction('You do not have permission to edit this member\'s attendance.'); return; }
         if (!this.data.leaves[member]) {
             this.data.leaves[member] = {};
         }
@@ -388,6 +483,7 @@ class AttendanceData {
     }
 
     removeLeave(member, date) {
+        if (!canEdit(member)) { denyAction('You do not have permission to edit this member\'s attendance.'); return; }
         if (this.data.leaves[member]) {
             delete this.data.leaves[member][date];
             this.save();
@@ -406,6 +502,7 @@ class AttendanceData {
     }
 
     addHoliday(date, name) {
+        if (!canManageHolidays()) { denyAction('Only admins can manage holidays.'); return; }
         if (!this.data.holidays.find(h => h.date === date)) {
             this.data.holidays.push({ date, name });
             this.data.holidays.sort((a, b) => a.date.localeCompare(b.date));
@@ -414,6 +511,7 @@ class AttendanceData {
     }
 
     removeHoliday(date) {
+        if (!canManageHolidays()) { denyAction('Only admins can manage holidays.'); return; }
         this.data.holidays = this.data.holidays.filter(h => h.date !== date);
         this.save();
     }
@@ -490,6 +588,7 @@ class AttendanceData {
     }
 
     importJSON(jsonStr) {
+        if (!canUseReports()) { denyAction('Only admins can import data.'); return false; }
         try {
             const imported = JSON.parse(jsonStr);
             if (imported.attendance && imported.holidays) {
@@ -526,13 +625,37 @@ class App {
 
     onDataUpdate() {
         if (!getCurrentUser()) return;
-        // Re-render when Firebase sends new data
-        this.selectedMember = this.selectedMember || TEAM_MEMBERS[0];
+        // Re-render when Firebase sends new data (roles/teams may have changed too)
+        this.applyRoleVisibility();
+        this.ensureViewAllowed();
+        this.ensureSelectedVisible();
         this.renderTeamList();
         if (this.currentView === 'calendar') this.renderCalendar();
         else if (this.currentView === 'summary') this.renderSummary();
         else if (this.currentView === 'holiday') this.renderHolidays();
         else if (this.currentView === 'team') this.renderTeamManagement();
+    }
+
+    // Whether the given view is allowed for the current user
+    isViewAllowed(view) {
+        if (view === 'holiday') return canManageHolidays();
+        if (view === 'team') return canManageTeam();
+        if (view === 'summary') return canViewSummary();
+        return true;
+    }
+
+    ensureViewAllowed() {
+        if (!this.isViewAllowed(this.currentView)) this.switchView('calendar');
+    }
+
+    // Never keep a member selected that the current user may not see
+    ensureSelectedVisible() {
+        const user = getCurrentUser();
+        if (!user) return;
+        if (!this.selectedMember || !canViewMember(this.selectedMember)) {
+            const visible = getVisibleMembers();
+            this.selectedMember = visible.includes(user) ? user : (visible[0] || user);
+        }
     }
 
     init() {
@@ -569,6 +692,9 @@ class App {
         this.data.reset();
         TEAM_MEMBERS = [];
         ADMIN_MEMBERS = [SUPER_ADMIN];
+        TEAMS = {};
+        MEMBER_TEAMS = {};
+        MANAGERS = [];
         this.selectedMember = '';
         this.currentView = 'calendar';
         this.sortColumn = null;
@@ -591,7 +717,7 @@ class App {
 
         // Empty every container that renders attendance / user data
         ['teamList', 'calendarGrid', 'attendanceStats', 'viewingInfo', 'summaryBody',
-         'holidayList', 'teamMemberList', 'reportDashboard', 'currentUserDisplay',
+         'holidayList', 'teamMemberList', 'teamsAdminList', 'reportDashboard', 'currentUserDisplay',
          'currentMonthYear', 'summaryMonthYear', 'syncStatus'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.innerHTML = '';
@@ -607,7 +733,7 @@ class App {
 
         // Clear all form fields and messages
         ['loginUsername', 'loginPassword', 'registerName', 'registerPassword', 'registerConfirm',
-         'memberName', 'holidayDate', 'holidayName'].forEach(id => {
+         'memberName', 'holidayDate', 'holidayName', 'newTeamName'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.value = '';
         });
@@ -635,6 +761,54 @@ class App {
         const title = document.getElementById('authModalTitle');
         if (title) title.textContent = '🔐 Login';
         document.getElementById('userModal').classList.add('active');
+
+        // Permission-bearing UI off until the next login recomputes it
+        this.applyRoleVisibility();
+
+        // Team picker: drop old options, then reload team NAMES only (no personal data)
+        this.clearTeamOptions();
+        this.loadTeamOptions();
+    }
+
+    clearTeamOptions() {
+        ['loginTeam', 'registerTeam'].forEach(id => {
+            const sel = document.getElementById(id);
+            if (sel) sel.innerHTML = '';
+        });
+    }
+
+    // Pre-auth: reads only the `teams` node and renders team names via textContent
+    async loadTeamOptions() {
+        const loginSel = document.getElementById('loginTeam');
+        const regSel = document.getElementById('registerTeam');
+        if (!loginSel || !regSel || typeof database === 'undefined') return;
+        let teams = {};
+        try {
+            const snap = await database.ref('teams').once('value');
+            teams = snap.val() || {};
+        } catch (e) {
+            return; // e.g. rules restrict public reads: users pick a team after login instead
+        }
+        if (getCurrentUser()) return; // logged in meanwhile: do not populate login-screen controls
+        const list = Object.keys(teams)
+            .filter(id => teams[id] && typeof teams[id].name === 'string')
+            .map(id => ({ id, name: teams[id].name }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+        const build = (sel, placeholder) => {
+            sel.innerHTML = '';
+            const first = document.createElement('option');
+            first.value = '';
+            first.textContent = placeholder;
+            sel.appendChild(first);
+            list.forEach(t => {
+                const o = document.createElement('option');
+                o.value = t.id;
+                o.textContent = t.name;
+                sel.appendChild(o);
+            });
+        };
+        build(loginSel, list.length ? 'Keep my current team' : 'No teams yet');
+        build(regSel, list.length ? 'Select your team' : 'No teams yet');
     }
 
     showUserSelection() {
@@ -778,6 +952,23 @@ class App {
                     await database.ref('users/' + sanitizedName + '/username').set(uname);
                 }
 
+                // First team assignment only: a user who already has a team cannot
+                // change it here (only the Superuser can).
+                const pickedTeam = (document.getElementById('loginTeam') || {}).value;
+                if (pickedTeam && matchedUser !== SUPER_ADMIN) {
+                    const hasTeam = (userData && userData.teamId) ||
+                        (await database.ref('memberTeams/' + sanitizedName).once('value')).val();
+                    if (!hasTeam) {
+                        const teamExists = (await database.ref('teams/' + pickedTeam + '/name').once('value')).val();
+                        if (teamExists) {
+                            await database.ref().update({
+                                ['users/' + sanitizedName + '/teamId']: pickedTeam,
+                                ['memberTeams/' + sanitizedName]: pickedTeam
+                            });
+                        }
+                    }
+                }
+
                 // Use full name as the stored current user
                 var username = matchedUser;
             } catch (error) {
@@ -812,6 +1003,7 @@ class App {
         document.getElementById('userModal').classList.remove('active');
         document.getElementById('loginPassword').value = '';
         this.updateUserDisplay();
+        this.ensureSelectedVisible();
         this.updateUIPermissions();
         this.renderTeamList();
         this.renderCalendar();
@@ -837,16 +1029,38 @@ class App {
                 return;
             }
 
-            // Hash and save
+            // Team: required once teams exist. Chosen team must be a real team.
+            const teams = (await database.ref('teams').once('value')).val() || {};
+            const pickedTeam = (document.getElementById('registerTeam') || {}).value || '';
+            if (Object.keys(teams).length > 0 && !pickedTeam) {
+                errorEl.textContent = 'Please select your team.';
+                return;
+            }
+            if (pickedTeam && !teams[pickedTeam]) {
+                errorEl.textContent = 'Selected team no longer exists. Please pick again.';
+                return;
+            }
+
+            // Hash and save. Only fixed, non-privileged fields come from the client:
+            // isAdmin is always false and isManager is never written here. A team the
+            // Superuser already assigned to this name is kept.
             const hash = await hashPassword(password);
             const uname = await generateUniqueUsername(name);
-            await database.ref('users/' + sanitizedName).set({
-                name: name,
-                passwordHash: hash,
-                registeredAt: new Date().toISOString(),
-                isAdmin: false,
-                username: uname
-            });
+            const existing = (await database.ref('users/' + sanitizedName).once('value')).val() || {};
+            const teamId = existing.teamId || pickedTeam || null;
+            const updates = {
+                ['users/' + sanitizedName + '/name']: name,
+                ['users/' + sanitizedName + '/passwordHash']: hash,
+                ['users/' + sanitizedName + '/registeredAt']: new Date().toISOString(),
+                ['users/' + sanitizedName + '/isAdmin']: false,
+                ['users/' + sanitizedName + '/username']: uname,
+                ['users/' + sanitizedName + '/terminated']: null
+            };
+            if (teamId) {
+                updates['users/' + sanitizedName + '/teamId'] = teamId;
+                updates['memberTeams/' + sanitizedName] = teamId;
+            }
+            await database.ref().update(updates);
 
             // Add to team members if not already there
             await this.refreshTeamMembers();
@@ -866,6 +1080,7 @@ class App {
         document.getElementById('registerPassword').value = '';
         document.getElementById('registerConfirm').value = '';
         this.updateUserDisplay();
+        this.ensureSelectedVisible();
         this.updateUIPermissions();
         this.renderTeamList();
         this.renderCalendar();
@@ -927,29 +1142,25 @@ class App {
     }
 
     // Fix 3: Hide/show UI elements based on permissions
+    // Show/hide nav and sections from the current role flags (no network)
+    applyRoleVisibility() {
+        const show = (id, on, display) => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = on ? display : 'none';
+        };
+        show('btnHolidayView', canManageHolidays(), 'block');
+        show('btnTeamView', canManageTeam(), 'block');
+        show('btnSyncTeams', canUseReports(), '');
+        show('btnEmailReport', canUseReports(), '');
+        show('adminSettings', isAdmin(), 'block');
+        show('teamsAdmin', canManageTeams(), 'block');
+        show('btnSummaryView', canViewSummary(), 'block');
+    }
+
     updateUIPermissions() {
         const admin = isAdmin();
-        const holidayBtn = document.getElementById('btnHolidayView');
-        if (holidayBtn) holidayBtn.style.display = admin ? 'block' : 'none';
-        const teamBtn = document.getElementById('btnTeamView');
-        if (teamBtn) teamBtn.style.display = admin ? 'block' : 'none';
-        const syncBtn = document.getElementById('btnSyncTeams');
-        if (syncBtn) syncBtn.style.display = admin ? '' : 'none';
-        const reportBtn = document.getElementById('btnEmailReport');
-        if (reportBtn) reportBtn.style.display = admin ? '' : 'none';
-        const adminSettings = document.getElementById('adminSettings');
-        if (adminSettings) adminSettings.style.display = admin ? 'block' : 'none';
-
-        // Summary visibility depends on toggle for non-admin
+        this.applyRoleVisibility();
         const summaryBtn = document.getElementById('btnSummaryView');
-        if (summaryBtn) {
-            if (admin) {
-                summaryBtn.style.display = 'block';
-            } else {
-                const toggle = document.getElementById('toggleVisibility');
-                summaryBtn.style.display = (toggle && toggle.checked) ? 'block' : 'none';
-            }
-        }
 
         // Load visibility toggle state from Firebase
         if (typeof database !== 'undefined') {
@@ -958,10 +1169,10 @@ class App {
                 const val = snapshot.val();
                 const toggle = document.getElementById('toggleVisibility');
                 if (toggle) toggle.checked = val === true;
-                // Update summary visibility after loading setting
-                if (summaryBtn && !admin) {
-                    summaryBtn.style.display = val === true ? 'block' : 'none';
-                }
+                // Update nav/visibility after loading setting
+                this.applyRoleVisibility();
+                this.ensureSelectedVisible();
+                this.renderTeamList();
             });
         }
     }
@@ -1013,20 +1224,9 @@ class App {
     renderTeamList() {
         const list = document.getElementById('teamList');
         const currentUser = getCurrentUser();
-        const admin = isAdmin();
 
-        // Determine which members to show
-        let visibleMembers = [...TEAM_MEMBERS];
-
-        // If not admin, check visibility setting
-        if (!admin) {
-            const toggle = document.getElementById('toggleVisibility');
-            const everyoneSeesAll = toggle && toggle.checked;
-            if (!everyoneSeesAll) {
-                // Only show logged-in user
-                visibleMembers = visibleMembers.filter(m => m === currentUser);
-            }
-        }
+        // Admin: everyone. Manager: own team + self. Others: self (own team if toggle on)
+        let visibleMembers = getVisibleMembers();
 
         // Put logged-in user on top
         if (currentUser && visibleMembers.includes(currentUser)) {
@@ -1038,9 +1238,9 @@ class App {
             const initials = member.split(' ').map(n => n[0]).join('').substring(0, 2);
             const isActive = member === this.selectedMember ? 'active' : '';
             const isMe = member === currentUser ? '<span class="me-tag">(You)</span>' : '';
-            return `<li class="${isActive}" data-member="${member}">
-                <span class="avatar" style="background:${AVATAR_COLORS[i % AVATAR_COLORS.length]}">${initials}</span>
-                ${member} ${isMe}
+            return `<li class="${isActive}" data-member="${escapeHtml(member)}">
+                <span class="avatar" style="background:${AVATAR_COLORS[i % AVATAR_COLORS.length]}">${escapeHtml(initials)}</span>
+                ${escapeHtml(member)} ${isMe}
             </li>`;
         }).join('');
     }
@@ -1053,25 +1253,26 @@ class App {
         document.getElementById('currentMonthYear').textContent =
             `${monthNames[this.currentMonth]} ${this.currentYear}`;
 
+        this.ensureSelectedVisible();
         this.renderViewingInfo();
         this.renderStats();
         this.renderCalendarGrid();
     }
 
     renderViewingInfo() {
-        const currentUser = localStorage.getItem('attendance_current_user');
+        const currentUser = getCurrentUser();
         const viewing = this.selectedMember;
         const info = document.getElementById('viewingInfo');
         if (!info) return;
-        const isAdminUser = currentUser && (ADMIN_MEMBERS.indexOf(currentUser) !== -1 || currentUser === SUPER_ADMIN);
         const isSelf = currentUser && currentUser === viewing;
+        const v = escapeHtml(viewing);
 
         if (isSelf) {
-            info.innerHTML = `<span class="viewing-member editing">📝 Editing: ${viewing}</span>`;
-        } else if (isAdminUser) {
-            info.innerHTML = `<span class="viewing-member editing">📝 Admin Editing: ${viewing}</span>`;
+            info.innerHTML = `<span class="viewing-member editing">📝 Editing: ${v}</span>`;
+        } else if (canEdit(viewing)) {
+            info.innerHTML = `<span class="viewing-member editing">📝 Admin Editing: ${v}</span>`;
         } else {
-            info.innerHTML = `<span class="view-only-tag">👁️ View Only</span> <span class="viewing-member">Viewing: ${viewing}</span>`;
+            info.innerHTML = `<span class="view-only-tag">👁️ View Only</span> <span class="viewing-member">Viewing: ${v}</span>`;
         }
     }
 
@@ -1336,8 +1537,9 @@ class App {
 
         const workingDays = this.data.getWorkingDays(this.currentYear, this.currentMonth);
 
-        // Build data array
-        let memberData = TEAM_MEMBERS.map(member => {
+        // Build data array (only members the current user may see)
+        if (!canViewSummary()) return;
+        let memberData = getVisibleMembers().map(member => {
             const attended = this.data.getAttendanceCount(member, this.currentYear, this.currentMonth);
             const percentage = this.data.getAttendancePercentage(member, this.currentYear, this.currentMonth);
             let statusClass, statusText, statusOrder;
@@ -1386,7 +1588,7 @@ class App {
         tbody.innerHTML = memberData.map(m => {
             const barColor = m.percentage >= REQUIRED_PERCENTAGE ? 'green' : (m.percentage >= 40 ? 'orange' : 'red');
             return `<tr>
-                <td>${m.name}</td>
+                <td>${escapeHtml(m.name)}</td>
                 <td>${m.attended}</td>
                 <td>${m.workingDays}</td>
                 <td>
@@ -1400,6 +1602,7 @@ class App {
 
     // --- Holiday View ---
     renderHolidays() {
+        if (!canManageHolidays()) return;
         const list = document.getElementById('holidayList');
         const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -1430,6 +1633,8 @@ class App {
 
     // --- View Switching ---
     switchView(view) {
+        // Refuse views the user may not open (also blocks console / stale-DOM access)
+        if (!this.isViewAllowed(view)) view = 'calendar';
         this.currentView = view;
         document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
         document.querySelectorAll('.btn-sidebar').forEach(b => b.classList.remove('active'));
@@ -1456,35 +1661,48 @@ class App {
     // --- Team Management ---
     renderTeamManagement() {
         const list = document.getElementById('teamMemberList');
+        if (!canManageTeam()) { list.innerHTML = ''; return; }
         const currentUserIsAdmin = isAdmin();
+        const superUser = canAssignRoles();
+        this.renderTeamsAdmin();
         let html = TEAM_MEMBERS.map((member, i) => {
             const initials = member.split(' ').map(n => n[0]).join('').substring(0, 2);
             const memberIsAdmin = ADMIN_MEMBERS.includes(member);
+            const memberIsManager = MANAGERS.includes(member);
             const isSuperAdmin = member === SUPER_ADMIN;
-            let adminBtn = '';
-            if (currentUserIsAdmin) {
-                if (memberIsAdmin && !isSuperAdmin) {
-                    adminBtn = `<button class="btn-admin btn-admin-remove" data-member="${member}" title="Remove admin role">👑 Remove Admin</button>`;
-                } else if (!memberIsAdmin) {
-                    adminBtn = `<button class="btn-admin btn-admin-add" data-member="${member}" title="Make admin">Make Admin</button>`;
-                } else if (isSuperAdmin) {
-                    adminBtn = `<span class="super-admin-badge">👑 Super Admin</span>`;
-                }
-            } else if (memberIsAdmin) {
-                adminBtn = `<span class="admin-tag">Admin</span>`;
+            const m = escapeHtml(member);
+            const teamId = getMemberTeamId(member);
+            const teamName = getTeamName(teamId);
+            let roleControls = '';
+            if (superUser) {
+                const opts = ['<option value="">Unassigned</option>']
+                    .concat(Object.keys(TEAMS).filter(id => TEAMS[id] && TEAMS[id].name).map(id =>
+                        `<option value="${escapeHtml(id)}"${id === teamId ? ' selected' : ''}>${escapeHtml(TEAMS[id].name)}</option>`))
+                    .join('');
+                const adminCtl = isSuperAdmin
+                    ? `<span class="super-admin-badge">👑 Super Admin</span>`
+                    : `<label class="role-check"><input type="checkbox" class="chk-admin" data-member="${m}"${memberIsAdmin ? ' checked' : ''}> Admin</label>`;
+                roleControls = `
+                    <select class="member-team-select" data-member="${m}" title="Team">${opts}</select>
+                    <label class="role-check"><input type="checkbox" class="chk-manager" data-member="${m}"${memberIsManager ? ' checked' : ''}> Manager</label>
+                    ${adminCtl}`;
+            } else {
+                roleControls = `<span class="team-tag">${escapeHtml(teamName || 'Unassigned')}</span>` +
+                    (memberIsManager ? `<span class="admin-tag">Manager</span>` : '') +
+                    (memberIsAdmin ? `<span class="admin-tag">Admin</span>` : '');
             }
 
-            return `<div class="team-member-item" draggable="true" data-index="${i}" data-member="${member}">
+            return `<div class="team-member-item" draggable="true" data-index="${i}" data-member="${m}">
                 <div class="team-member-info">
                     <span class="drag-handle" title="Drag to reorder">☰</span>
-                    <span class="avatar" style="background:${AVATAR_COLORS[i % AVATAR_COLORS.length]}">${initials}</span>
-                    <span class="team-member-name">${member}</span>
-                    ${adminBtn}
+                    <span class="avatar" style="background:${AVATAR_COLORS[i % AVATAR_COLORS.length]}">${escapeHtml(initials)}</span>
+                    <span class="team-member-name">${m}</span>
+                    ${roleControls}
                 </div>
                 <div class="team-member-actions">
-                    <button class="btn-edit" data-member="${member}" title="Edit name">✏️</button>
-                    ${currentUserIsAdmin ? `<button class="btn-reset-pw" data-member="${member}" title="Reset password">🔑</button>` : ''}
-                    <button class="btn-delete" data-member="${member}" title="Remove">Remove</button>
+                    <button class="btn-edit" data-member="${m}" title="Edit name">✏️</button>
+                    ${currentUserIsAdmin ? `<button class="btn-reset-pw" data-member="${m}" title="Reset password">🔑</button>` : ''}
+                    <button class="btn-delete" data-member="${m}" title="Remove">Remove</button>
                 </div>
             </div>`;
         }).join('');
@@ -1520,10 +1738,10 @@ class App {
                             <div class="team-member-item terminated-item">
                                 <div class="team-member-info">
                                     <span class="avatar" style="background:#666">✗</span>
-                                    <span class="team-member-name terminated-name">${name}</span>
+                                    <span class="team-member-name terminated-name">${escapeHtml(name)}</span>
                                 </div>
                                 <div class="team-member-actions">
-                                    <button class="btn-restore" data-member="${name}" title="Restore member">♻️ Restore</button>
+                                    <button class="btn-restore" data-member="${escapeHtml(name)}" title="Restore member">♻️ Restore</button>
                                 </div>
                             </div>
                         `).join('')}
@@ -1572,6 +1790,7 @@ class App {
                 e.preventDefault();
                 item.classList.remove('drag-over');
                 const dropIndex = parseInt(item.dataset.index);
+                if (!canManageTeam()) { denyAction('Only admins can reorder the team.'); return; }
                 if (draggedIndex !== dropIndex && draggedIndex >= 0) {
                     // Reorder array
                     const movedMember = TEAM_MEMBERS.splice(draggedIndex, 1)[0];
@@ -1598,39 +1817,131 @@ class App {
     }
 
     // --- Admin Management ---
-    makeAdmin(member) {
-        if (!isAdmin()) return;
-        if (ADMIN_MEMBERS.includes(member)) return;
-        if (!confirm(`Make "${member}" an admin?\n\nAdmins can edit everyone's attendance and manage the team.`)) return;
-        ADMIN_MEMBERS.push(member);
+    // Superuser only (roles are assigned by the Superuser alone)
+    makeAdmin(member) { return this.setAdminRole(member, true); }
+    removeAdmin(member) { return this.setAdminRole(member, false); }
+
+    setAdminRole(member, makeAdmin) {
+        if (!canAssignRoles()) { denyAction('Only the Superuser can assign roles.'); return false; }
+        if (!member || !TEAM_MEMBERS.includes(member)) return false;
+        if (member === SUPER_ADMIN) {
+            if (!makeAdmin) alert('⚠️ Cannot remove the super admin.');
+            return false;
+        }
+        const has = ADMIN_MEMBERS.includes(member);
+        if (makeAdmin === has) return true;
+        const msg = makeAdmin
+            ? `Make "${member}" an admin?\n\nAdmins can edit everyone's attendance and manage the team.`
+            : `Remove admin rights from "${member}"?`;
+        if (!confirm(msg)) { this.renderTeamManagement(); return false; }
+        ADMIN_MEMBERS = makeAdmin ? [...ADMIN_MEMBERS, member] : ADMIN_MEMBERS.filter(m => m !== member);
         saveAdminList(ADMIN_MEMBERS);
-        // Update in Firebase
         if (typeof database !== 'undefined') {
-            const sanitizedName = member.replace(/\./g, '___DOT___');
-            database.ref('users/' + sanitizedName + '/isAdmin').set(true);
+            database.ref('users/' + nameKey(member) + '/isAdmin').set(makeAdmin);
         }
         this.renderTeamManagement();
+        return true;
     }
 
-    removeAdmin(member) {
-        if (!isAdmin()) return;
-        if (member === SUPER_ADMIN) {
-            alert('⚠️ Cannot remove the super admin.');
-            return;
-        }
-        if (getCurrentUser() !== SUPER_ADMIN) {
-            alert('⚠️ Only super admin can remove other admins.');
-            return;
-        }
-        if (!confirm(`Remove admin rights from "${member}"?`)) return;
-        ADMIN_MEMBERS = ADMIN_MEMBERS.filter(m => m !== member);
-        saveAdminList(ADMIN_MEMBERS);
-        // Update isAdmin field in Firebase
-        if (typeof database !== 'undefined') {
-            const sanitizedName = member.replace(/\./g, '___DOT___');
-            database.ref('users/' + sanitizedName + '/isAdmin').set(false);
-        }
+    setManager(member, makeManager) {
+        if (!canAssignRoles()) { denyAction('Only the Superuser can assign roles.'); return false; }
+        if (!member || !TEAM_MEMBERS.includes(member) || typeof database === 'undefined') return false;
+        const has = MANAGERS.includes(member);
+        if (makeManager === has) return true;
+        const next = makeManager ? [...MANAGERS, member] : MANAGERS.filter(m => m !== member);
+        MANAGERS = next;
+        database.ref().update({
+            managers: next.length ? next : null,
+            ['users/' + nameKey(member) + '/isManager']: makeManager
+        });
         this.renderTeamManagement();
+        return true;
+    }
+
+    // --- Teams (Superuser only) ---
+    createTeam(name) {
+        if (!canManageTeams()) { denyAction('Only the Superuser can create teams.'); return false; }
+        if (typeof database === 'undefined') return false;
+        name = (name || '').trim();
+        if (!name) return false;
+        if (name.length > 60) { alert('⚠️ Team name must be 60 characters or fewer.'); return false; }
+        if (Object.values(TEAMS).some(t => t && t.name && t.name.toLowerCase() === name.toLowerCase())) {
+            alert('⚠️ A team with this name already exists.');
+            return false;
+        }
+        const id = database.ref('teams').push().key;
+        database.ref('teams/' + id).set({
+            id, name, createdBy: getCurrentUser(), createdAt: new Date().toISOString()
+        });
+        return true;
+    }
+
+    renameTeam(teamId) {
+        if (!canManageTeams()) { denyAction('Only the Superuser can rename teams.'); return false; }
+        const team = TEAMS[teamId];
+        if (!team || typeof database === 'undefined') return false;
+        const input = prompt(`Rename team "${team.name}":`, team.name);
+        const name = (input || '').trim();
+        if (!name || name === team.name) return false;
+        if (name.length > 60) { alert('⚠️ Team name must be 60 characters or fewer.'); return false; }
+        if (Object.keys(TEAMS).some(id => id !== teamId && TEAMS[id].name && TEAMS[id].name.toLowerCase() === name.toLowerCase())) {
+            alert('⚠️ A team with this name already exists.');
+            return false;
+        }
+        database.ref('teams/' + teamId + '/name').set(name);
+        return true;
+    }
+
+    // Deleting a team leaves its members Unassigned; users are never deleted
+    deleteTeam(teamId) {
+        if (!canManageTeams()) { denyAction('Only the Superuser can delete teams.'); return false; }
+        const team = TEAMS[teamId];
+        if (!team || typeof database === 'undefined') return false;
+        const memberKeys = Object.keys(MEMBER_TEAMS).filter(k => MEMBER_TEAMS[k] === teamId);
+        if (!confirm(`Delete team "${team.name}"?\n\n${memberKeys.length} member(s) will become Unassigned. No users or attendance data are deleted.`)) return false;
+        const updates = { ['teams/' + teamId]: null };
+        memberKeys.forEach(k => {
+            updates['memberTeams/' + k] = null;
+            updates['users/' + k + '/teamId'] = null;
+        });
+        database.ref().update(updates);
+        return true;
+    }
+
+    assignTeam(member, teamId) {
+        if (!canAssignRoles()) { denyAction('Only the Superuser can change a member\'s team.'); return false; }
+        if (!member || !TEAM_MEMBERS.includes(member) || typeof database === 'undefined') return false;
+        teamId = teamId || null;
+        if (teamId && !TEAMS[teamId]) return false;
+        const key = nameKey(member);
+        database.ref().update({
+            ['users/' + key + '/teamId']: teamId,
+            ['memberTeams/' + key]: teamId
+        });
+        return true;
+    }
+
+    renderTeamsAdmin() {
+        const box = document.getElementById('teamsAdminList');
+        if (!box) return;
+        if (!canManageTeams()) { box.innerHTML = ''; return; }
+        const ids = Object.keys(TEAMS).filter(id => TEAMS[id] && TEAMS[id].name)
+            .sort((a, b) => TEAMS[a].name.localeCompare(TEAMS[b].name));
+        if (ids.length === 0) {
+            box.innerHTML = '<p style="color: var(--text-secondary);">No teams yet. Create one above.</p>';
+            return;
+        }
+        box.innerHTML = ids.map(id => {
+            const count = Object.keys(MEMBER_TEAMS).filter(k => MEMBER_TEAMS[k] === id).length;
+            return `<div class="team-admin-item">
+                <span class="team-admin-name">${escapeHtml(TEAMS[id].name)}</span>
+                <span class="team-tag">${count} member${count === 1 ? '' : 's'}</span>
+                <span class="team-member-actions">
+                    <button class="btn-edit btn-team-rename" data-team="${escapeHtml(id)}" title="Rename team">✏️</button>
+                    <button class="btn-delete btn-team-delete" data-team="${escapeHtml(id)}" title="Delete team">Delete</button>
+                </span>
+            </div>`;
+        }).join('');
     }
 
     // --- Theme Toggle ---
@@ -1760,7 +2071,7 @@ class App {
     }
 
     async restoreMember(name) {
-        if (!isAdmin()) return;
+        if (!canManageTeam()) { denyAction('Only admins can restore team members.'); return; }
 
         // Remove terminated flag and set mustResetPassword (Fix 1)
         const sanitizedName = name.replace(/\./g, '___DOT___');
@@ -1786,12 +2097,14 @@ class App {
 
     // --- Sync to Teams ---
     showSyncModal() {
+        if (!canUseReports()) { denyAction('Only admins can use Sync to Teams.'); return; }
         document.getElementById('syncModal').classList.add('active');
         document.getElementById('syncStatus').className = 'sync-status';
         document.getElementById('syncStatus').textContent = '';
     }
 
     syncExport() {
+        if (!canUseReports()) { denyAction('Only admins can export data.'); return; }
         const json = this.data.exportJSON();
         const blob = new Blob([json], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
@@ -1808,6 +2121,7 @@ class App {
     }
 
     syncImport() {
+        if (!canUseReports()) { denyAction('Only admins can import data.'); return; }
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = '.json';
@@ -1835,6 +2149,7 @@ class App {
 
     // --- Monthly Dashboard Report ---
     generateDashboardReport() {
+        if (!canUseReports()) return '';
         const monthNames = ["January", "February", "March", "April", "May", "June",
             "July", "August", "September", "October", "November", "December"];
 
@@ -1964,6 +2279,7 @@ class App {
     }
 
     generateEmailHTML() {
+        if (!canUseReports()) return '';
         const monthNames = ["January", "February", "March", "April", "May", "June",
             "July", "August", "September", "October", "November", "December"];
 
@@ -2108,6 +2424,7 @@ ${m.percentage}%
     }
 
     showEmailModal() {
+        if (!canUseReports()) { denyAction('Only admins can generate reports.'); return; }
         const dashboardHtml = this.generateDashboardReport();
         document.getElementById('reportDashboard').innerHTML = dashboardHtml;
         document.getElementById('emailModal').classList.add('active');
@@ -2115,7 +2432,7 @@ ${m.percentage}%
 
     // --- Email Reminder Check ---
     checkEmailReminder() {
-        if (!getCurrentUser()) return;
+        if (!getCurrentUser() || !canUseReports()) return;
         const today = new Date();
         const day = today.getDate();
         const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
@@ -2167,6 +2484,7 @@ ${m.percentage}%
             document.getElementById('registerForm').style.display = 'block';
             document.getElementById('forgotForm').style.display = 'none';
             document.getElementById('authModalTitle').textContent = '📝 Register';
+            this.loadTeamOptions();
         });
 
         document.getElementById('showLogin').addEventListener('click', (e) => {
@@ -2230,6 +2548,7 @@ ${m.percentage}%
         document.getElementById('teamList').addEventListener('click', (e) => {
             const li = e.target.closest('li');
             if (li) {
+                if (!canViewMember(li.dataset.member)) return;
                 this.selectedMember = li.dataset.member;
                 this.renderTeamList();
                 this.switchView('calendar');
@@ -2242,12 +2561,8 @@ ${m.percentage}%
             if (dayEl && !dayEl.classList.contains('empty') &&
                 !dayEl.classList.contains('weekend') &&
                 !dayEl.classList.contains('holiday')) {
-                const currentUser = localStorage.getItem('attendance_current_user');
                 const viewing = this.selectedMember;
-                if (!currentUser) return;
-                const isAdminUser = ADMIN_MEMBERS.indexOf(currentUser) !== -1 || currentUser === SUPER_ADMIN;
-                const isSelf = currentUser === viewing;
-                if (!isAdminUser && !isSelf) return;
+                if (!getCurrentUser() || !canViewMember(viewing) || !canEdit(viewing)) return;
 
                 const date = dayEl.dataset.date;
                 const isFuture = dayEl.classList.contains('future');
@@ -2278,12 +2593,8 @@ ${m.percentage}%
                 !dayEl.classList.contains('weekend') &&
                 !dayEl.classList.contains('holiday')) {
                 e.preventDefault();
-                const currentUser = localStorage.getItem('attendance_current_user');
                 const viewing = this.selectedMember;
-                if (!currentUser) return;
-                const isAdminUser = ADMIN_MEMBERS.indexOf(currentUser) !== -1 || currentUser === SUPER_ADMIN;
-                const isSelf = currentUser === viewing;
-                if (!isAdminUser && !isSelf) return;
+                if (!getCurrentUser() || !canViewMember(viewing) || !canEdit(viewing)) return;
 
                 const date = dayEl.dataset.date;
                 const isFuture = dayEl.classList.contains('future');
@@ -2345,6 +2656,7 @@ ${m.percentage}%
 
         // Visibility toggle (admin only)
         document.getElementById('toggleVisibility').addEventListener('change', (e) => {
+            if (!isAdmin()) { e.target.checked = !e.target.checked; denyAction('Only admins can change this setting.'); return; }
             if (typeof database !== 'undefined') {
                 database.ref('settings/everyoneSeesAll').set(e.target.checked);
             }
@@ -2377,6 +2689,36 @@ ${m.percentage}%
                     input.value = '';
                 }
             }
+        });
+
+        // Superuser: team assignment and Manager/Admin flags (each handler re-checks permission)
+        document.getElementById('teamMemberList').addEventListener('change', (e) => {
+            const t = e.target;
+            const member = t.dataset ? t.dataset.member : null;
+            if (!member) return;
+            if (t.classList.contains('member-team-select')) {
+                if (!this.assignTeam(member, t.value)) this.renderTeamManagement();
+            } else if (t.classList.contains('chk-manager')) {
+                if (!this.setManager(member, t.checked)) this.renderTeamManagement();
+            } else if (t.classList.contains('chk-admin')) {
+                if (!this.setAdminRole(member, t.checked)) this.renderTeamManagement();
+            }
+        });
+
+        // Superuser: create / rename / delete teams
+        const createTeamFromInput = () => {
+            const input = document.getElementById('newTeamName');
+            if (this.createTeam(input.value)) input.value = '';
+        };
+        document.getElementById('btnCreateTeam').addEventListener('click', createTeamFromInput);
+        document.getElementById('newTeamName').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') createTeamFromInput();
+        });
+        document.getElementById('teamsAdminList').addEventListener('click', (e) => {
+            const id = e.target.dataset ? e.target.dataset.team : null;
+            if (!id) return;
+            if (e.target.classList.contains('btn-team-rename')) this.renameTeam(id);
+            else if (e.target.classList.contains('btn-team-delete')) this.deleteTeam(id);
         });
 
         document.getElementById('teamMemberList').addEventListener('click', (e) => {

@@ -124,6 +124,14 @@
                             <span class="toggle-text">Everyone sees everyone's data</span>
                         </label>
                     </div>
+                    <div class="teams-admin" id="teamsAdmin" style="display:none;">
+                        <h4>Teams (Superuser only)</h4>
+                        <div class="team-form">
+                            <input type="text" id="newTeamName" maxlength="60" placeholder="New team name">
+                            <button class="btn-primary" id="btnCreateTeam">+ Create Team</button>
+                        </div>
+                        <div id="teamsAdminList"></div>
+                    </div>
                     <p class="drag-hint">💡 Drag members up/down to reorder the list</p>
                     <div class="team-member-list" id="teamMemberList"></div>
                     <div class="team-info">
@@ -212,6 +220,10 @@
                             <span class="toggle-password" id="toggleLoginPw">👁️</span>
                         </div>
                     </div>
+                    <div class="auth-field">
+                        <label for="loginTeam">Team <small>(only used if you have no team yet)</small></label>
+                        <select id="loginTeam" class="auth-input"></select>
+                    </div>
                     <div class="auth-field remember-field">
                         <label class="checkbox-label">
                             <input type="checkbox" id="rememberMe"> Remember me
@@ -239,6 +251,10 @@
                     <div class="auth-field">
                         <label>Confirm Password</label>
                         <input type="password" id="registerConfirm" class="auth-input" placeholder="Re-enter password">
+                    </div>
+                    <div class="auth-field">
+                        <label for="registerTeam">Team</label>
+                        <select id="registerTeam" class="auth-input"></select>
                     </div>
                     <button class="btn-primary auth-btn" id="btnRegister">Register</button>
                     <p class="auth-switch">Already registered? <a href="#" id="showLogin">Login here</a></p>
