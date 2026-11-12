@@ -21,6 +21,8 @@ A real-time team attendance tracking app with role-based access, Firebase sync, 
 - 📧 Monthly HTML report for email
 - 👥 Team management (add/remove/restore members)
 - 🏖️ Holiday management with current month highlighting
+- 🏷️ Teams: pick a team at sign-up; your team name shows beside "Team Members" and in the header
+- 🔒 App is locked on the login screen and logout clears all cached user data
 
 ## Attendance Types
 

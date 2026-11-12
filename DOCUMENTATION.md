@@ -28,6 +28,8 @@ A real-time team attendance tracking application with a Jira-style dark/light UI
 - **Admin password reset** — Admin resets any user's password to default `Temp@123`
 - **Role-based access** — Admin vs regular user permissions
 - **Super Admin** — Akshay Gurav (cannot be removed as admin)
+- **Locked while logged out** — The app content is hidden behind the login screen; no previous user's attendance is visible (see *Login Privacy* below)
+- **Teams** — Super Admin creates teams; users pick one at sign-up; Managers see only their own team (see *Teams & Roles*)
 
 ### Attendance Types
 
@@ -125,6 +127,23 @@ A real-time team attendance tracking application with a Jira-style dark/light UI
 
 > Permission checks run in the browser. Without Firebase Authentication and matching database rules they do not stop someone calling Firebase directly. See *Recommended security rules* in DEPLOYMENT.md.
 
+### Permission Matrix
+
+| Capability | Super Admin | Admin | Manager | Admin + Manager | Employee |
+|---|---|---|---|---|---|
+| Create / rename / delete teams | Yes | No | No | No | No |
+| Assign teams, grant Manager / Admin | Yes | No | No | No | No |
+| View own data | Yes | Yes | Yes | Yes | Yes |
+| View other members | All | All | Own team | All | Own team only if "Everyone sees everyone's data" is on, else none |
+| Edit own attendance | Yes | Yes | Yes | Yes | Yes |
+| Edit others' attendance | Yes | Yes | No | Yes | No |
+| Holidays | Yes | Yes | No | Yes | No |
+| Manage Team (add/remove/rename/restore/reset password/reorder) | Yes | Yes | No | Yes | No |
+| Summary | All | All | Own team | All | Own team, only if toggle on |
+| Monthly Report / Sync | Yes | Yes | No | Yes | No |
+
+Unassigned users (no team) see only themselves, whatever their flags, unless they are Admin or Super Admin.
+
 ### Regular User
 - Can only edit their own attendance
 - Can plan future attendance (next 2 months)
@@ -160,6 +179,7 @@ A real-time team attendance tracking application with a Jira-style dark/light UI
 ### Switching Users / Logout
 - Click **⇄ Logout** in the top-right
 - Login screen appears for a different user
+- Logout also clears the saved "Remember me" credentials on that browser
 
 ### Changing Password
 - Click **🔑 Password** in the top-right
@@ -183,6 +203,7 @@ attendance-tracker-app/
 ├── firebase-config.js  — Firebase initialization
 ├── README.md           — Quick overview
 ├── DEPLOYMENT.md       — Deployment instructions
+├── REQUIREMENTS-teams-roles.md — Teams & roles requirements
 └── DOCUMENTATION.md    — This file
 ```
 
@@ -223,6 +244,8 @@ attendance-tracker-app/
       "passwordHash": "sha256...",
       "isAdmin": true,
       "isSuperAdmin": true,
+      "teamId": "-Nabc123",
+      "isManager": false,
       "terminated": false,
       "registeredAt": "2026-07-22T10:00:00Z"
     }
@@ -233,6 +256,13 @@ attendance-tracker-app/
   "connectionTest": { "timestamp": 123, "status": "connected" }
 }
 ```
+
+Data model notes (all additive, no migration needed):
+- `teams/{teamId}` — team record (id, name, createdBy, createdAt)
+- `users/{name}.teamId` and `.isManager` — canonical team and Manager flag; optional, missing means no team / not a Manager
+- `memberTeams` and `managers` — mirrors of the above, so the client never has to read `users` (which holds password hashes) after login
+- `admins` remains the source for Admin
+- Existing users with no `teamId` are shown as "Unassigned"; the app does not throw when these nodes are missing
 
 ### Attendance Calculation
 ```
@@ -295,14 +325,15 @@ Firebase config is stored in `firebase-config.js`. See that file for the full co
 
 ### Top Navigation Bar
 ```
-[Logo] Attendance Tracker 🟢Synced  |  [agurav 👑 | 🔑 Password | ⇄ Logout]  [☀️Light] [🔄Sync] [📧Report]
+[Logo] Attendance Tracker 🟢Synced  |  [agurav 👑 (Platform) | 🔑 Password | ⇄ Logout]  [☀️Light] [🔄Sync] [📧Report]
 ```
+- Team name shown in brackets after the username: own team, `All Teams` for Admin/Super Admin, `No team` if unassigned
 - Sync indicator: 🟢 Synced / 🔴 Offline
 - Password, Logout, Sync, Report buttons
 - Sync & Report hidden for non-admin
 
 ### Sidebar
-- Team Members list (logged-in user on top with "(You)" tag)
+- Team Members list (logged-in user on top with "(You)" tag). The heading shows the viewer's team, e.g. `Team Members - Platform`, `Team Members - All Teams` (Admin/Super Admin) or `Team Members - No team`. Admins also see a `[Team]` tag on each member.
 - Views: Calendar, Summary (visibility-dependent), Holidays (admin), Manage Team (admin)
 - Legend: Present, WFH, WFH Email, Leave, Exception, Weekend, Holiday, Today
 
@@ -312,6 +343,103 @@ Firebase config is stored in `firebase-config.js`. See that file for the full co
 - Stat tiles (centered): Working Days, Days Attended, Need to Attend, Required, Attendance %
 - Motivation message (when 60% met)
 - Calendar grid (centered)
+
+---
+
+## Login Privacy (2026-11-12, commit 605054d)
+
+**Problem:** the previous user's attendance was visible behind the login modal.
+
+**Now:**
+- `lockApp()` runs whenever nobody is signed in (page load without a session, logout, stale session). It adds the `auth-locked` body class, so only the login view shows. `unlockApp()` removes it after a successful login.
+- Logout clears: rendered containers (team list, calendar, stats, summary, holidays, reports, header user info), in-memory state (`TEAM_MEMBERS`, `ADMIN_MEMBERS`, selected member, view, sort), open modals and the day context menu, and the login form is reset.
+- Realtime Firebase listeners are detached on logout (`stopListeners`) and the data layer is reset; listeners are re-created on login.
+- localStorage keys removed: `attendance_current_user`, `attendance_tracker_data`, `attendance_team_members`, `attendance_admin_list`, `attendance_remembered_user`, `attendance_remembered_pass`. `sessionStorage` is cleared. Theme and `reminder_*` flags are kept.
+- Async results that return after logout (or for a different user) are ignored via `getCurrentUser()` checks.
+
+**How to test manually**
+1. Log in as user A, open Calendar and Summary, then Logout. The login screen must show no calendar, member list or stats behind it.
+2. Reload the page while logged out. Still nothing visible behind the login screen.
+3. In DevTools → Application → Local Storage, confirm the keys above are gone after logout.
+4. Log in as user B. No data from user A appears at any point.
+5. Logout during a slow connection, then check no data renders after the login screen appears.
+
+---
+
+## Teams & Roles (2026-11-12, commit 88de19b)
+
+Summary of behavior is in *User Roles* and the *Permission Matrix* above; requirements are in `REQUIREMENTS-teams-roles.md`.
+
+- Super Admin only: create/rename/delete teams, assign a team after sign-up, grant/revoke Manager and Admin (Admins can no longer promote/demote admins).
+- Sign-up: team dropdown (names only, read from `teams` before login). Required once any team exists. New accounts always start with `isAdmin: false` and no Manager flag.
+- Login: the team dropdown only fills a team for users who have none; it never changes an existing team.
+- Manager: read-only view of own team (members, calendar, Summary). Manager is not offered Holidays, Manage Team, Sync or Monthly Report, and those functions refuse when called anyway. Own attendance is editable.
+- Admin + Manager: Admin rules apply (global scope, full edit).
+- "Everyone sees everyone's data" is now team-scoped for non-admins.
+- Existing users without a team are Unassigned until the Super Admin assigns one. Deleting a team makes its members Unassigned.
+- Permissions are recomputed on login and on every listener update, and cleared on logout.
+
+**How to test manually**
+1. As Super Admin: create teams A and B; Manage Team → assign users, mark one user Manager of team A.
+2. Register a new user: the team dropdown lists A and B; registration requires a pick.
+3. Log in as the Manager: only team A members appear; calendars are "View Only" for others; Holidays and Manage Team are absent; own calendar is editable.
+4. Make the same user Admin too: all members appear and editing, Holidays and Manage Team work. Remove Manager only: still Admin.
+5. As Admin (not Super Admin): no team or role controls. As Employee: only self (or own team with the toggle on).
+6. Log in as an existing user with no team: shows "No team", sees only self.
+
+### Recommended Firebase security rules (NOT deployed, NOT active)
+
+> ⚠️ **Client-side checks alone are not secure.** The live database rules are open and there is no Firebase Authentication. Anyone with the Firebase config can read or write any path directly, and `appData` is a single blob every client downloads, so Manager/team scoping only stops honest use. The snippet below is a design target: it needs Firebase Auth with custom claims and a per-member split of attendance data (`attendanceByMember` does not exist yet). It has not been applied to this project. Full notes are in DEPLOYMENT.md.
+
+```json
+{
+  "rules": {
+    "teams": { ".read": true, "$teamId": { ".write": "auth.token.superuser === true" } },
+    "memberTeams": { ".read": "auth != null", ".write": "auth.token.superuser === true" },
+    "managers": { ".read": "auth != null", ".write": "auth.token.superuser === true" },
+    "admins": { ".read": "auth != null", ".write": "auth.token.superuser === true" },
+    "users": {
+      "$memberKey": {
+        ".read": "auth.token.superuser === true || auth.token.name === $memberKey",
+        "teamId":    { ".write": "auth.token.superuser === true" },
+        "isManager": { ".write": "auth.token.superuser === true" },
+        "isAdmin":   { ".write": "auth.token.superuser === true" }
+      }
+    },
+    "attendanceByMember": {
+      "$memberKey": {
+        ".read": "auth.token.admin === true || auth.token.superuser === true || auth.token.name === $memberKey || (auth.token.manager === true && data.child('teamId').val() === auth.token.teamId)",
+        ".write": "auth.token.admin === true || auth.token.superuser === true || auth.token.name === $memberKey"
+      }
+    },
+    "holidays": { ".read": "auth != null", ".write": "auth.token.admin === true || auth.token.superuser === true" }
+  }
+}
+```
+
+### Known limitations (non-blocking review findings)
+- All enforcement is client-side against an open database (above).
+- A Manager/Admin flag set on a name that has not registered yet applies to whoever registers that name first. Register users before flagging them.
+- Renaming a member does not migrate their team, Manager flag or `users` record, so they show as Unassigned afterwards.
+- If `SUPER_ADMIN` is not yet registered, anyone can register that name (pre-existing).
+- If `teams` is later made non-public, the pre-login team picker will be empty; assign teams from Manage Team instead.
+- Not tested against real Firebase or in a browser (role matrix was verified with a Node harness); do the manual checks above before release.
+
+---
+
+## Team Name Display (2026-11-12, commit 0162eda)
+
+- The signed-in user's team shows beside the **Team Members** heading (`Team Members - Platform`) and in the header user info (`agurav 👑 (Platform)`).
+- Label rules: own team name; `All Teams` for Admin and Super Admin (including Admin + Manager); `No team` when unassigned or the team no longer exists.
+- Admins also see a `[Team]` tag (or `[No team]`) on each member in the sidebar list.
+- Labels are set with `textContent` and cleared on logout (`teamHeadingLabel` is emptied in `lockApp()`); they refresh when teams or assignments change.
+
+**How to test manually**
+1. Log in as a user in team A: heading and header show `Platform`-style team name.
+2. Log in as Admin or Super Admin: `All Teams`, and `[Team]` tags on members.
+3. Log in as an unassigned user: `No team`.
+4. Super Admin renames or reassigns a team while a user is logged in: label updates.
+5. Logout: no team name remains on screen.
 
 ---
 
@@ -332,6 +460,13 @@ Firebase config is stored in `firebase-config.js`. See that file for the full co
 
 ## Changelog
 
+### 2026-11-12
+- **fix (605054d):** Login privacy — app locked while logged out; logout clears UI, state, listeners, cached localStorage and resets the login form
+- **feat (88de19b):** Teams, Manager role and Super Admin role assignment; team picker on register/login; Manager read-only team view; Admin + Manager union; team-scoped visibility toggle
+- **feat (0162eda):** Team name beside "Team Members" and in header user info (`All Teams` / `No team` cases)
+- **docs:** Added permission matrix, data model notes, undeployed security rules, limitations and manual test checklists
+
+### Earlier
 - Firebase Realtime Database integration for shared data
 - Username-based login system with SHA-256 password hashing
 - Role-based permissions (Super Admin, Admin, User)
