@@ -1,6 +1,6 @@
 # Design: Server-side team isolation (Firebase Auth + per-team data + rules)
 
-Status: design for review (iteration 2, revised after review of iteration 1). Branch `feature/server-side-team-isolation`, from `a7001f7`.
+Status: design for review (iteration 3, revised after review of iteration 2; iteration 1 and 2 findings are handled in section 17). Branch `feature/server-side-team-isolation`, from `a7001f7`.
 Implements `FUTURE-ENHANCEMENTS.md` section 1. No code is written by this document. Section 17 lists how every review finding was handled.
 
 ## 1. Overview
@@ -37,7 +37,7 @@ The figures in this subsection come from the Firebase pricing and limits pages a
 - Admin SDK: free, runs locally. `importUsers` is an Auth management API; I found no Spark restriction on it. The scratch-project gate in section 8 confirms it works before the real run.
 - Cloud Functions, server-minted tokens and custom claims: excluded (server or Blaze).
 - Security rules and the Database emulator: free.
-- Rule evaluation limits: Realtime Database caps the data lookups a single rule evaluation may perform. I have not verified the cap, and this design does not assume a number. Every rule reads the caller's profile through `root.child('usersV2').child(auth.uid)`; the emulator tests (section 13) include the worst cases (Admin writing a member's attendance, Manager reading a team, the move write) and the plan is: if any hits a limit error, denormalize `teamId`, `isAdmin`, `isManager` and `memberKey` into one small `usersV2/{uid}/auth` child so each rule reads one node. Custom claims are not an option.
+- Rule evaluation limits: Realtime Database caps the data lookups a single rule evaluation may perform. I have not verified the cap, and this design does not assume a number. Every rule reads the caller's profile through `root.child('usersV2').child(auth.uid)`; the emulator tests (section 13) include the worst cases (Admin writing a member's attendance, Manager reading a team, the move write) **Decision, with no deferred fallback: the data model stays as in section 3 and there is no denormalized `usersV2/{uid}/auth` summary node.** An acceptance gate applies instead. The PR must record (a) the byte size of the expanded `database.rules.json` and (b) the emulator result for the three worst cases. If any case fails with a lookup-limit or size error, implementation stops and returns to design review; the implementer must not improvise a denormalization. Reason for not adopting the summary node now: it is a second copy of the role flags that every writer (Superuser flag change, terminate, first team assignment, move) would have to keep consistent with the profile, creating drift risk in the very data the rules trust, in order to guard against a limit that may not bind. Custom claims are not an option.
 
 What free-plan rules can and cannot express, and what we do instead:
 
@@ -72,7 +72,7 @@ New paths (exact). Nodes fall into three groups.
 ```
 usersV2/{uid}                                   // uid = Firebase Auth uid
   name: string                                // full name, e.g. "Akshay Gurav"; 1..100 chars
-  username: string                            // lowercase [a-z0-9._-], 1..64; unique (enforced by Auth email)
+  username: string                            // display copy of the Auth email local part; lowercase [a-z0-9._-], 1..64. Uniqueness is enforced by Auth, not by this field; login uses Auth only
   memberKey: string                           // nameKey(name): '.' -> '___DOT___'; immutable; 1..128 chars; no $ # [ ] / . or control chars
   teamId: string | absent                     // absent = unassigned. Superuser-assigned, or self first assignment
   isAdmin: boolean
@@ -87,7 +87,7 @@ usersV2/{uid}                                   // uid = Firebase Auth uid
 memberOwners/{memberKey}: uid                 // write-once claim; only the claimant (or the Superuser) can read it
 teamNames/{teamId}: string                    // PUBLIC read. Name only. Used by the pre-login team picker.
 
-teamData/{teamId}/members/{memberKey}: { name, order, uid?, terminated?, addedBy }
+teamData/{teamId}/members/{memberKey}: { name, order, uid?, terminated?, addedBy? }
 teamData/{teamId}/attendance/{memberKey}/{yyyy-mm-dd}: true
 teamData/{teamId}/leaves/{memberKey}/{yyyy-mm-dd}: "leave" | "wfh" | "wfh-email" | "exception" | "planned"
 teamData/unassigned/...                       // same shape; bucket for users whose teamId is absent
@@ -121,7 +121,7 @@ Client changes live in `app.js` and `index.html`; `firebase-config.js` gains the
 const MODE = (typeof SECURITY_MODE !== 'undefined' && SECURITY_MODE === 'secure') ? 'secure' : 'legacy';
 ```
 
-and uses only `MODE`. `typeof` on an undeclared global does not throw, so a new `app.js` served with an old cached `firebase-config.js` runs in legacy. Anything other than the exact string `"secure"` (a typo, `"Secure"`, `true`, empty) is legacy. All Auth SDK use is behind `MODE === 'secure'` and additionally guarded with `typeof firebase.auth === 'function'`, so a failed load of `firebase-auth-compat` cannot break legacy. In secure mode, if `firebase.auth` is missing, the login screen shows "Could not load sign-in. Reload the page." and nothing else runs. The `connectionTest` write in `firebase-config.js` stays in legacy and is skipped when the mode is secure (the check in `firebase-config.js` uses the same `typeof` expression). The mixed-version case in the other direction (old `app.js`, new `firebase-config.js` set to secure) is legacy code against the new rules: it is blocked, which is why the cutover order in section 10 deploys rules before the flag.
+and uses only `MODE`. In `firebase-config.js` the Auth object is created only inside the same test, `typeof SECURITY_MODE !== 'undefined' && SECURITY_MODE === 'secure' && typeof firebase.auth === 'function'`, so in legacy mode no Auth instance exists and nothing opens IndexedDB or registers auth listeners; the `firebase-auth-compat` script tag in `index.html` is harmless on its own. The legacy-mode diff to the `connectionTest` block is only the wrapping condition (a no-op in legacy). `typeof` on an undeclared global does not throw, so a new `app.js` served with an old cached `firebase-config.js` runs in legacy. Anything other than the exact string `"secure"` (a typo, `"Secure"`, `true`, empty) is legacy. All Auth SDK use is behind `MODE === 'secure'` and additionally guarded with `typeof firebase.auth === 'function'`, so a failed load of `firebase-auth-compat` cannot break legacy. In secure mode, if `firebase.auth` is missing, the login screen shows "Could not load sign-in. Reload the page." and nothing else runs. The `connectionTest` write in `firebase-config.js` stays in legacy and is skipped when the mode is secure (the check in `firebase-config.js` uses the same `typeof` expression). The mixed-version case in the other direction (old `app.js`, new `firebase-config.js` set to secure) is legacy code against the new rules: it is blocked, which is why the cutover order in section 10 deploys rules before the flag.
 
 ### 4.1 Identity mapping
 
@@ -129,7 +129,7 @@ Auth email = `normalize(username) + "@attendance.local"`. `normalize` lowercases
 
 ### 4.2 Login
 
-1. Validate non-empty fields. 2. `auth.setPersistence(LOCAL)` if Remember me is ticked, else `SESSION`. 3. `signInWithEmailAndPassword(candidateEmail, password)`. 4. Read `usersV2/{uid}` (own profile is always readable by its owner). If missing, or `terminated === true`: `signOut()` and show "Your account has been terminated. Contact admin." (rules also block all data for terminated users; the client check is for the message). If the profile is missing for an otherwise valid Auth user, that is an interrupted registration: go to step 6b with a fresh profile only if a `memberOwners/{nameKey}` claim readable by this uid exists, else sign out with "Account not set up. Contact admin." 5. If `mustResetPassword`: force the set-new-password prompt (4.6) before `unlockApp()`. 6. Two idempotent repairs and one choice:
+1. Validate non-empty fields. 2. `auth.setPersistence(LOCAL)` if Remember me is ticked, else `SESSION`. 3. `signInWithEmailAndPassword(candidateEmail, password)`. 4. Read `usersV2/{uid}` (own profile is always readable by its owner). If missing, or `terminated === true`: `signOut()` and show "Your account has been terminated. Contact admin." (rules also block all data for terminated users; the client check is for the message). If the profile is missing for an otherwise valid Auth user, that is an interrupted registration the client cannot repair: it cannot enumerate claims, and the name, team and registration time of the abandoned attempt are not recoverable. Sign out and show "Account not set up. Contact admin." The Superuser repairs it locally with `migrate.js clear-claim --key K` and `migrate.js delete-auth-user --username x` (section 9), after which the person registers again. A fresh-profile path is deliberately not provided. Failures inside a live registration are already rolled back by the client (4.3 step 4). 5. If `mustResetPassword`: force the set-new-password prompt (4.6) before `unlockApp()`. 6. Two idempotent repairs and one choice:
    - **6a. Team pick.** If `teamId` is absent and `canSelfAssignTeam` (not Admin, not Superuser) and `teamNames` is non-empty, the user picks a team, and the client performs the **move**: read own `teamData/unassigned/members/{K}`, `attendance/{K}`, `leaves/{K}` (all self-readable), then one multi-path `update()` that sets `usersV2/{uid}/teamId = T`, writes the three nodes under `teamData/T/...`, and sets the three `unassigned` copies to `null`. If there was no roster entry yet, step 6b's entry is written to `T` directly. Rules allow this because every write is checked against the pre-write profile (teamId still absent): the destination writes are allowed by the "self move" clause (create-only, valid team, user has no team), the source removals by the "own unassigned bucket" clause, and `teamId` by the first-assignment clause. Atomic: either all of it or none.
    - **6b. Roster self-heal.** If `teamData/{bucket}/members/{K}` does not exist, create it `{name, order: Date.now(), uid, addedBy: K}`; if it exists without `uid`, set `uid`. This repairs an interrupted registration (4.3) and an Admin having deleted the entry.
    - **6c.** Otherwise nothing.
@@ -149,7 +149,7 @@ Rules evaluate against the state before a write, so a brand new user cannot crea
 1. **Validate** name (required, max 100, `memberKey` charset per section 3), password (4.7), confirm, team (required once `teamNames` is non-empty; must exist there).
 2. **Create the Auth user.** Candidate usernames in order (`generateUsername`, first-two + last, then base + random 2 digits): `createUserWithEmailAndPassword`; on `auth/email-already-in-use` try the next, up to 10, then fail with "Could not allocate a username. Contact admin." No data written yet.
 3. **Claim the name.** `set memberOwners/{K} = uid`. Allowed only when the caller has no profile yet and the key is unclaimed. If denied: read `memberOwners/{K}` (a claimant can read their own claim; anyone else gets a denial, so this does not enumerate). If it equals `uid` (a retry of the same account), continue. Otherwise show "This name is already registered. Please login.", `auth.currentUser.delete()`, stop.
-4. **Create the profile.** `set usersV2/{uid} = {name, username, memberKey: K, teamId?: picked, isAdmin:false, isManager:false, terminated:false, registeredAt}`. Allowed only if `memberOwners/{K} === uid` (so the profile is bound to the claim made in step 3), `name` maps to `K`, and the create-time constraints in section 7 hold. On failure: delete the claim (owner may delete it while no profile exists), `auth.currentUser.delete()`, show "Registration failed. Try again." If the claim delete or the Auth delete fails, sign out, `console.error(code)`; the orphan Auth account has no profile and no data access, and an orphan claim burns that name until the Superuser clears it with the Admin SDK script (residual, section 14).
+4. **Create the profile.** `set usersV2/{uid} = {name, username, memberKey: K, teamId?: picked, isAdmin:false, isManager:false, terminated:false, registeredAt}`. Allowed only if `memberOwners/{K} === uid` (so the profile is bound to the claim made in step 3), `name` maps to `K`, and the create-time constraints in section 7 hold. On failure: delete the claim (owner may delete it while no profile exists), `auth.currentUser.delete()`, show "Registration failed. Try again." If the claim delete or the Auth delete fails, sign out, `console.error(code)`; the orphan Auth account has no profile and no data access, and an orphan claim burns that name until the Superuser clears it with `migrate.js clear-claim`, and the orphan account is removed with `migrate.js delete-auth-user` (residual, section 14).
 5. **Create or claim the roster entry** (now a profile exists, so the caller passes the normal self rules): if `teamData/{bucket}/members/{K}` does not exist, create `{name, order: Date.now(), uid, addedBy: K}`; if it exists without `uid` (an Admin pre-added the member), set `uid`. Failure here is non-fatal: the profile exists, the user proceeds, and login step 6b repairs it.
 6. Proceed as login step 7.
 
@@ -168,7 +168,7 @@ The Superuser bootstrap in legacy ("first login creates the Superuser") is remov
 
 ### 4.6 First-login set-password fallback
 
-Used for (a) users whose hash could not be imported (section 8), (b) users with `mustResetPassword`, and (c) accounts after an Admin SDK reset. The account exists with a Superuser-distributed temporary password. At sign-in the client sees `mustResetPassword === true` and runs: prompt new password, confirm, `updatePassword`, then remove `usersV2/{uid}/mustResetPassword`. Rule: the user may only change this field from `true` to removed. This is a soft policy: the user already holds the temporary password, so skipping the prompt via dev tools harms nobody but themselves. If `updatePassword` fails with `auth/requires-recent-login`, the client re-authenticates with the temporary password and retries once. Terminated-then-restored members keep their existing password.
+Used for (a) users whose hash could not be imported (section 8), (b) users with `mustResetPassword`, and (c) accounts after an Admin SDK reset. The account exists with a Superuser-distributed temporary password. At sign-in the client sees `mustResetPassword === true` and runs: prompt new password, confirm, `updatePassword`, then remove `usersV2/{uid}/mustResetPassword`. Rule: the user may only change this field from `true` to removed. This is a soft policy: the user already holds the temporary password, so skipping the prompt via dev tools harms nobody but themselves. If `updatePassword` fails with `auth/requires-recent-login`, the client re-authenticates with the temporary password and retries once. Restore (5.3) sets `mustResetPassword` through the Admin-allowed `true` write, as legacy did; the restored member keeps their existing password until they choose a new one at next login.
 
 ### 4.7 Password policy
 
@@ -198,7 +198,7 @@ Attached in `unlockApp()` after the profile loads; all go through the existing `
 
 The roster entry (`teamData/{teamId}/members/{key}`) is the source of the Admin's member list, including `uid` once the member has registered. Terminate and restore in secure mode:
 
-- Registered member (roster entry has `uid`): one multi-path `update()` sets `usersV2/{uid}/terminated`, `usersV2/{uid}/terminatedAt` and `teamData/{teamId}/members/{key}/terminated`. The profile flag is the enforcement (rules deny all data to a terminated user); the roster flag is what the Admin's "terminated users" section displays. If they ever diverge, the profile wins for access and the roster for display; `verify` reports divergence.
+- Registered member (roster entry has `uid`): one multi-path `update()` sets `usersV2/{uid}/terminated`, `usersV2/{uid}/terminatedAt` and `teamData/{teamId}/members/{key}/terminated`. The profile flag is the enforcement (rules deny all data to a terminated user); the roster flag is what the Admin's "terminated users" section displays. If they ever diverge, the profile wins for access and the roster for display; `verify` reports divergence. For parity with legacy terminate (which removes the member from the Admin list and leaves the Manager list alone) the same `update()` also sets `usersV2/{uid}/isAdmin` to `false` when it was `true`; the rules let an Admin of the target's team write `isAdmin` only to `false` (7.3). `isManager` is not touched. Auth accounts are never disabled; the profile `terminated` flag is the only enforcement, so restore works entirely from the browser. Restore sets `terminated` to `false`, removes `terminatedAt`, and sets `mustResetPassword: true` (an Admin-allowed `true` write), matching legacy where the restored member is asked to set a new password at next login. Restore does not bring back the Admin flag, as in legacy, where the Superuser re-promotes.
 - Roster-only member (no `uid`): only the roster `terminated` flag, as today.
 - The Admin writes the profile flags through the `ADMIN_OF` rule (section 7): same team as the target, target not a Superuser, target not self. The Admin can read the profiles in their team by uid (taken from the roster), which is what the restore and password-request buttons need.
 - Restore sets the flags back to `false` and removes `terminatedAt`.
@@ -218,6 +218,8 @@ The roster entry (`teamData/{teamId}/members/{key}`) is the source of the Admin'
 | Create own roster entry / set own `uid` on an unclaimed entry | W | W | W | W | W | none |
 | Set `terminated` on a member | all | own team, not Superuser, not self | none | none | none | none |
 | Write `isAdmin`, `isManager`, `teamId` (after first set) | W | none | none | none | none | none |
+| Write `isAdmin = false` on a member (terminate parity) | W | own team, not Superuser, not self | none | none | none | none |
+| Write `mustResetPassword = true` on a member (restore parity); clear own flag | W | own team (set true only) | own flag (clear only) | own flag (clear only) | own flag (clear only) | none |
 | First `teamId` self-assignment and the matching own-data move | n/a | none | allowed | allowed | allowed | none |
 | Write `isSuperAdmin` | none (Admin SDK only) | none | none | none | none | none |
 | Write `teams`, `teamNames` | W | none | none | none | none | none |
@@ -250,7 +252,7 @@ Written to `database.rules.json` (not deployed by this work). Realtime Database 
 | `SELFMOVE(t)` (a team-less caller may create own records in a valid team) | `(!ME.child('teamId').exists() && t !== 'unassigned' && root.child('teamNames').child(t).exists())` |
 | `TW(t)` (team-wide read) | `(SU) || (ADM(t)) || (MGR(t)) || (SI && ME.child('teamId').val() === t && root.child('settings').child('everyoneSeesAll').val() === true)` |
 | `ADMIN_OF(u)` (caller is an Admin of user `u`'s team) | `(SI && ME.child('isAdmin').val() === true && ME.child('teamId').exists() && ME.child('teamId').val() === root.child('usersV2').child(u).child('teamId').val() && root.child('usersV2').child(u).child('isSuperAdmin').val() !== true && auth.uid !== u)` |
-| `KEYRE` | `/^[^$#\[\]\/.\x00-\x1f\x7f]{1,128}$/` (in the JSON file, backslashes are doubled) |
+| `KEYRE` | `/^[^$#\[\]\/.\x00-\x1f\x7f]{1,128}$/` (in the JSON file, backslashes are doubled). Test-gated like `replace`: if the emulator rejects the control-character range, fall back to `/^[^$#\[\]\/.]{1,128}$/`, strip control characters in the client `nameKey` and report them in `plan` and `verify` as data-domain violations. If `\d` is rejected in the date regexes, use `[0-9]`. |
 
 Note on finding 2: `TW(t)` compares `ME.teamId` to `t` with `===`. An unassigned caller has no `teamId`, so `val()` is `null` and never equals a team id; the unassigned bucket is therefore not team-readable, even with the toggle on. `BUCKET` (which does treat absent as `unassigned`) is used only for the caller's own key.
 
@@ -281,7 +283,7 @@ Realtime Database `.read` and `.write` grants cascade down and a child cannot re
       ".read": "SI",
       ".write": "SU",
       "$teamId": {
-        ".validate": "newData.hasChildren(['id', 'name']) && newData.child('id').val() === $teamId",
+        ".validate": "$teamId !== 'unassigned' && newData.hasChildren(['id', 'name']) && newData.child('id').val() === $teamId",
         "id": { ".validate": "newData.isString()" },
         "name": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100" },
         "createdBy": { ".validate": "newData.isString() && newData.val().length <= 100" },
@@ -324,7 +326,7 @@ Realtime Database `.read` and `.write` grants cascade down and a child cannot re
           ".write": "(SU) || (auth.uid === $uid && !data.exists() && data.parent().exists() && data.parent().child('isAdmin').val() !== true && data.parent().child('isSuperAdmin').val() !== true)",
           ".validate": "newData.isString() && root.child('teamNames').child(newData.val()).exists()"
         },
-        "isAdmin": { ".write": "SU", ".validate": "newData.isBoolean()" },
+        "isAdmin": { ".write": "(SU) || (ADMIN_OF($uid) && newData.val() === false)", ".validate": "newData.isBoolean()" },
         "isManager": { ".write": "SU", ".validate": "newData.isBoolean()" },
         "isSuperAdmin": { ".write": false, ".validate": "newData.isBoolean()" },
         "terminated": { ".write": "(SU) || ADMIN_OF($uid)", ".validate": "newData.isBoolean()" },
@@ -333,7 +335,7 @@ Realtime Database `.read` and `.write` grants cascade down and a child cannot re
           ".validate": "newData.isString() && newData.val().length <= 40"
         },
         "mustResetPassword": {
-          ".write": "(SU) || (auth.uid === $uid && data.val() === true && !newData.exists())",
+          ".write": "(SU) || (ADMIN_OF($uid) && newData.val() === true) || (auth.uid === $uid && data.val() === true && !newData.exists())",
           ".validate": "newData.val() === true"
         },
         "registeredAt": {
@@ -437,27 +439,49 @@ Tool: `tools/migrate-to-secure/migrate.js` (Node, `firebase-admin`), run by the 
 
 **Write guard.** The script writes only under these prefixes: `usersV2/`, `memberOwners/`, `teamNames/`, `teamData/`, `holidays/`, `migration/`. Any other path (including `teams`, `settings` and every legacy-only node) is rejected in code before the call, and the unit tests assert it. It never calls `remove` or `set` on an old or shared path. Auth users are created through the Auth API (a separate system).
 
+**Source of truth and reconciliation (the legacy copies drift).** The live app does not take roles or team from `users/{key}` alone. `isAdmin()` honors the `admins` array, `isManager()` the `managers` array, and the team comes from `memberTeams` with `users/{key}.teamId` as a second copy. They disagree in practice: legacy terminate removes the name from `admins` but leaves `users/{key}.isAdmin` unchanged, and register writes `isAdmin: false` and never `isManager`. Taking only `users/*` would demote or promote people. The migration therefore derives, per user key `K` (the name, `.` encoded):
+
+- `isAdmin` = name is in `admins`, or name equals `SUPER_ADMIN`. (The live UI honors the array; a terminated user is out of `admins`, so they migrate with `isAdmin: false`.)
+- `isManager` = name is in `managers`.
+- `teamId` = `memberTeams[K]` if present, else `users[K].teamId` if present, else absent (unassigned). A `teamId` that is not a key of `teams` is reported as a conflict.
+- Every user where `users/*` and the arrays/`memberTeams` disagree is listed by `plan` (flag, both values, the value that would be used). `run` aborts if there is any disagreement unless `--prefer arrays` is given (arrays and `memberTeams` win, because that is what the live UI honors); the choice is printed. `verify` recomputes the effective roles from the legacy arrays and compares them with the profile flags.
+
+**Roster construction.** `teamMembers` is a flat array of names. A roster entry `teamData/{team}/members/{K}` is `{name, order, uid?, terminated?}` with `order` = the index in `teamMembers`; `addedBy` is omitted. `run` creates roster entries for three groups, so no data is dropped and `verify` can match everything:
+
+1. every name in `teamMembers`, under its `teamId` or `unassigned`;
+2. every terminated user (legacy terminate removes them from `teamMembers` but keeps attendance, leaves and the `users` record): `{name, order, terminated: true}` under their `teamId` or `unassigned`, so the Admin's terminated list and restore keep working (5.3);
+3. every key that has attendance or leaves but appears in neither group: `{name: decoded key, order}` under its `memberTeams` team or `unassigned`.
+
+Groups 2 and 3 get `order` values after the highest index of group 1, in ascending name order, so reruns are deterministic. No attendance or leave entry is ever skipped. After `run`, the count of attendance/leave keys without a roster entry in the same team bucket must be zero; `verify` fails otherwise.
+
+**Profile defaults.** Legacy `users` records often lack fields the rules require on every profile write (`terminated`, `isManager`, `username`, `registeredAt`). Because the Admin SDK bypasses rules, a gap would import cleanly and then break the first later client write (for example an Admin terminating that user). `run` therefore sets: `name` = `users.name`, else the decoded key; `memberKey` = `nameKey(name)`; `username` = `users.username` if present, else generated as in 4.1 and normalized; `terminated` = `users.terminated === true`; `isAdmin`/`isManager` booleans per the reconciliation; `registeredAt` = `users.registeredAt`, else `users.createdAt`, else the migration timestamp. A username that normalizes to empty (non-ASCII letters are stripped) or collides with another user or an existing Auth email gets a numeric suffix (2, 3, ...) assigned in ascending key order so reruns are stable; an empty base becomes `member`. The resulting username list, with no passwords, is written to `migration-usernames-<timestamp>.csv` and printed by `plan`, and the user includes it in the R7 announcement. `plan` and `verify` fail on any `usersV2` profile that lacks one of the seven mandatory fields with the right type, or whose `username` or `memberKey` violates the rules' patterns.
+
 Commands:
 
 - `plan` (and `--dry-run` on any write command): reads old data, prints exactly what it would create, writes nothing, exits 0. The report includes: counts per team; users to create/import; hash import eligibility (32-byte hex or not); members without a team; attendance or leave entries for names not on the roster; terminated users; duplicate holiday dates; username collisions; and **data-domain violations that the rules would reject**: attendance values other than `true`, leave values outside `leave|wfh|wfh-email|exception|planned`, dates not `YYYY-MM-DD`, names whose `memberKey` fails the `KEYRE` charset or exceeds 128 characters or whose `name`↔`memberKey` mapping fails, holiday names over 100 characters, `teams` entries failing the shape check. The script writes such data anyway (Admin SDK bypasses rules) only if the user passes `--allow-invalid`; otherwise `run` aborts, because data the client can never rewrite would be created. Out-of-domain legacy values are shown so the user can fix them in the legacy app first.
 - `run` (needs `--yes`, and `--hash-test-passed` or `--no-hash-import`, and refuses to start if `migration/cutoverAt` exists unless `--force-after-cutover`):
-  1. For each old user: create the Auth user through `importUsers` (SHA256, rounds 1) in batches of up to 1000. Users without a valid hash, with `mustResetPassword`, or whose import was rejected get `createUser` with a random password and `mustResetPassword: true`. Their temporary passwords go to a local file `migration-temp-passwords-<timestamp>.csv` created with mode 0600 and never printed. The script refuses to run unless that pattern is in `.gitignore`. Terminated users are imported with `terminated: true` and Auth `disabled: true`.
+  1. For each old user: create the Auth user through `importUsers` (SHA256, rounds 1) in batches of up to 1000. Users without a valid hash, with `mustResetPassword`, or whose import was rejected get `createUser` with a random password and `mustResetPassword: true`. Their temporary passwords go to `migration-temp-passwords-<timestamp>.csv` in the directory given by `--out-dir` (default: the current directory) and are never printed. POSIX file modes are not enforced on Windows, so the script does not rely on them. After writing, it prints the path and the instruction to restrict access (Windows: `icacls <file> /inheritance:r /grant:r "%USERNAME%:F"`; macOS and Linux: `chmod 600 <file>`), and `--encrypt-csv` writes the file AES-256-GCM encrypted with a passphrase read from a prompt (Node `crypto`), readable only through `migrate.js show-passwords <file>`, which prints to the terminal. The script reminds the user to delete the file after distributing the passwords. It refuses to run unless the file pattern is in `.gitignore`. **Terminated users are imported enabled**: the script never sets Auth `disabled`, so restore works from the browser (5.3). Enforcement is `terminated: true` on the profile, which makes the rules deny them all data and makes login show the termination message.
   2. The **Superuser** named by `--superuser` (must equal the `SUPER_ADMIN` constant in `app.js`, which the script reads and checks) gets an Auth user even if the legacy data has no record or hash for them (the legacy login allows a Superuser with no `users` entry): a random password goes into the CSV. The script sets `isSuperAdmin: true` on that one profile only.
-  3. Write `usersV2/{uid}`, `memberOwners/{memberKey}` (one per registered user and per roster entry that has an account), `teamNames` (derived from the existing `teams`), `teamData/*/members|attendance|leaves`, `holidays`.
+  3. Write `usersV2/{uid}`, `memberOwners/{memberKey}` (one per registered user and per roster entry that has an account), `teamNames` (derived from the existing `teams`), `teamData/*/members|attendance|leaves` (including the roster entries for terminated users and roster-less keys, see "Roster construction"), `holidays`.
   4. **Add-only semantics.** Every write is at leaf level (`teamData/{t}/attendance/{key}/{date}`, `.../leaves/{key}/{date}`, each roster field, each holiday, each profile field). If the new path already holds a **different** value, the script does **not** overwrite it; it records a conflict in the report. Equal values are skipped. This makes `run --resume` safe to repeat and safe against newer data written in secure mode.
   5. `--mirror` (pre-cutover only; refused if `migration/cutoverAt` exists): after the add-only pass, also removes leaf entries under `teamData/` and `holidays/` that are absent from the legacy data. It exists because legacy edits made after the first run (a toggle off, a rename) cannot propagate through add-only. It requires `--confirm-no-secure-usage`, an explicit statement from the user that nobody has used secure mode against the live project. It still only touches new paths.
 - `verify`: read-only; exits non-zero on any difference. Checks:
   - user count: legacy users vs `usersV2` vs Auth users;
-  - roster count per team, and every legacy member maps to exactly one new roster entry;
+  - roster count per team, and every legacy member, terminated user and attendance/leave key maps to exactly one roster entry in exactly one team; unmatched count must be zero;
   - attendance entry count and a SHA-256 checksum over a canonical sorted serialization of `(teamId, memberKey, date)`; leaves count and checksum of `(teamId, memberKey, date, type)`; holidays count;
   - `teams` shape check and `teams` ids equal `teamNames` ids (sync);
   - **exactly one** `usersV2` profile has `isSuperAdmin: true`, its Auth user exists, and its name equals `SUPER_ADMIN`;
   - roster `terminated` agrees with profile `terminated` for registered members;
+  - effective roles recomputed from the legacy arrays and `memberTeams` agree with the profile flags and `teamId` (before cutover);
+  - every `usersV2` profile satisfies the seven-field rule and the `username`/`memberKey` patterns; profile `username` equals the Auth email local part (warning only, since it is a display copy);
+  - no `memberKey` appears in more than one team's `members` (failure before cutover, where legacy had one namespace; warning after cutover, for the Superuser to reconcile with the move action, see 10.1);
+  - `memberOwners` claims whose uid has no profile are listed as orphans (warning, resolved with `clear-claim` and `delete-auth-user`);
   - after `mark-cutover`, entries present only in the new structure are listed as **new-only** (informational, not failures), so post-cutover verify does not report real secure-mode edits as differences.
   Checksums are over attendance data, never passwords.
 - `mark-cutover`: writes `migration/cutoverAt`. After it exists, `run` refuses to start without `--force-after-cutover` and `--mirror` is refused outright.
+- `clear-cutover --yes`: removes `migration/cutoverAt` and nothing else. It is the supported step for re-cutting over after a rollback (section 11).
 - `reset-password`: see 4.5.
-- `set-superuser --username x` and `clear-claim --key K`: Admin SDK recovery commands (a mistyped Superuser, an orphan name claim).
+- `set-superuser --username x`, `clear-claim --key K` and `delete-auth-user --username x`: Admin SDK recovery commands (a mistyped Superuser, an orphan name claim, an Auth user left behind by an interrupted registration). `delete-auth-user` refuses if the user has a profile.
 - `export-new --to-json file`: read-only dump of `teamData` and `holidays`, for manual recovery after a rollback.
 
 Idempotent and resumable: re-running `run` skips users that already exist (matched by email), and the add-only leaf semantics mean it cannot clobber newer data. Old data is never deleted by anything in this work; deleting `appData` and the other old nodes is a manual, explicitly approved step after a stabilization period.
@@ -487,11 +511,29 @@ This is the single ordered runbook; section 11 and section 12 refer to these ste
 
 Rejected alternative: flag first, rules second. It leaves a gap in which secure clients write `teamData` while stale legacy clients still write `appData`, and the writes made in that gap exist on only one side. If the user insists on flag-first, R8's sync must be repeated after the rules deploy and secure-mode writes in the gap must be forbidden by announcement. The `mark-cutover` marker and add-only semantics limit damage but do not remove that gap.
 
+### 10.1 Behaviour changes to announce (R7)
+
+| Area | Legacy | Secure mode | Why |
+|---|---|---|---|
+| Password minimum | 4 characters | 6 | Firebase Auth minimum |
+| Remember me | Pre-fills a plaintext password stored in localStorage | Keeps you signed in; no password stored | Security |
+| Admin password reset | Admin sets a temporary password in the UI | "Request password reset"; the Superuser runs `reset-password` locally and hands over the temporary password | Only the Admin SDK can set another user's password |
+| Forgot password | Ask an Admin | Ask the Superuser | No deliverable email |
+| Login by full name | Works | Works unless the username got a numeric suffix; the username list is announced | 4.1 |
+| Terminate | Marks terminated, removes from team list and from `admins` | Same, plus the profile flag; Auth account stays enabled; `isAdmin` set to `false`; Manager flag untouched | Rules enforce `terminated`; parity |
+| Restore | Clears flag, member is told to set a new password at next login, Admin may reset it now | Same prompt at next login; the Admin's "reset now" option becomes a reset request; the old password keeps working until the member changes it; the Admin flag is not restored | An Admin cannot set a password |
+| Pre-added roster member who registers under a different team | One name-keyed namespace; `memberTeams` is overwritten, history follows the person | A second roster entry is created in the chosen team and the earlier entry and history stay in the team where the Admin added them; the person sees only the new one | Per-team paths; reading the other team to detect it is correctly denied |
+| Brief interruption | n/a | Errors between R9 and R10 for a few minutes | Cutover order |
+
+On the pre-added-member row: the design takes the documented-behaviour-change option. `verify` reports any `memberKey` present in more than one team after cutover, and the Superuser's existing move action reconciles it. A public `preAdded/{key}: teamId` hint that would force the registrant into the pre-adding team was considered and not chosen, because it would add a readable name-to-team index and change sign-up behaviour; it can be added later if wanted.
+
 ## 11. Rollback
 
 Until R12, nothing old was modified, so rollback is: (1) paste the rules recorded in R1 back into the Rules tab, (2) set `SECURITY_MODE = "legacy"` and republish, (3) users reload. `appData`, `users` (with hashes) and the other legacy nodes are intact, and `teams`/`settings` were never rewritten, so the legacy app works as before. Rollback before R9 changes nothing live.
 
 Data edited in secure mode (new paths) is not copied back automatically, so a rollback after real use loses those edits from the legacy view unless they are re-entered. `migrate.js export-new --to-json file` dumps `teamData` and `holidays` for manual recovery. Auth accounts and the new nodes may remain; they are inert in legacy mode. Passwords changed in secure mode do not propagate back to the old hashes: after a rollback those users use their old password, or the Superuser resets them in the legacy UI.
+
+**Retrying after a rollback.** `mark-cutover` blocks `run --resume` and `--mirror`, so a retry needs an explicit sequence. (1) Before rolling back, run `migrate.js export-new --to-json file` and keep the file (it holds the secure-mode edits). (2) Restore the R1 rules, set `SECURITY_MODE = "legacy"`, republish. (3) When ready to try again, run `migrate.js clear-cutover --yes`. (4) Repeat R5 and R6, then R7 and R8. In R8 use `run --resume --mirror --confirm-no-secure-usage` only if the export shows no secure-mode-only data worth keeping, because `--mirror` removes new-path leaves that the legacy data lacks; otherwise use `run --resume` (add-only) and reconcile the reported conflicts by hand. (5) R9, R10 and `mark-cutover` again.
 
 The live rules are unverified from here: DEPLOYMENT.md says they are open until 2026-08-21, a date that has passed. R1 records what is actually deployed, and the implementation replaces that stale statement in DEPLOYMENT.md.
 
@@ -501,10 +543,10 @@ Same numbering as the runbook in section 10.
 
 - R1: export a backup; copy the live rules.
 - R2: enable Email/Password; check Authentication usage.
-- R3: generate the service account key (keep out of git); install Node 18+ and `npm install` in `tools/migrate-to-secure`.
+- R3: generate the service account key (keep out of git; on Windows restrict the folder ACL); install Node 18+ and `npm install` in `tools/migrate-to-secure`.
 - R4: create a scratch Firebase project; run the hash gate, rules tests and a secure-mode trial there.
 - R5, R6, R8: run `plan`/`--dry-run`, `run`, `verify` (the Superuser check is part of `verify`).
-- R7: announce the freeze, the brief interruption and the 6-character minimum.
+- R7: announce the freeze, the brief interruption, the 6-character minimum, the username list and the behaviour changes in 10.1.
 - R9: deploy the rules.
 - R10: flip the flag and publish; run `mark-cutover`.
 - R11: smoke test; distribute temporary passwords from the local CSV, then delete it; optionally enable enumeration protection; optional hardening: App Check (section 14) and an API-key referrer restriction (not a security boundary).
@@ -522,12 +564,13 @@ Rules tests (Database emulator needs Java and a one-time download; if it cannot 
 - **Self move (7.4):** team-less user performs the full multi-path move and it succeeds; the same write by a user who already has a team fails; a move into a team not in `teamNames` fails; a move that also tries to write `isAdmin` fails; a self first-assignment as Admin or Superuser fails; a second `teamId` change by self fails.
 - **Roster `uid` (finding 10):** a team Admin setting their own uid on another member's entry fails; a member setting their own uid on their own key succeeds; a member setting a different uid fails; Admin deleting and recreating an entry without `uid` succeeds.
 - **Terminate:** Admin sets `terminated` on a member of own team (succeeds), on a Superuser (fails), on self (fails), on another team's member (fails); terminated users are denied everywhere except reading their own profile.
+- **Admin-writable flags (parity):** an Admin of the target's team sets `isAdmin` to `false` and `mustResetPassword` to `true` on a teammate (succeeds); setting `isAdmin` to `true`, setting `isManager`, or clearing a teammate's `mustResetPassword` fails; the same writes on another team's member, on a Superuser, or on self fail; a user clears only their own `mustResetPassword`. `teams/unassigned` and `teamNames/unassigned` writes fail.
 - **Other nodes:** anonymous reads `teamNames` only; `teams` and `teamNames` Superuser write only; `holidays` write with and without `adminCanEditHolidays`; `passwordResetRequests` by an Admin of the target's team, by an Admin of another team, with the wrong `requestedBy`; legacy-only nodes denied to everyone.
-- **Lookup limits:** the worst-case writes and reads (Admin writing a member's attendance, Manager reading a team, the move write) are accepted; a limit error triggers the `auth` denormalization fallback in 2.1.
+- **Lookup limits:** the worst-case writes and reads (Admin writing a member's attendance, Manager reading a team, the move write) are accepted; the results and the byte size of the expanded `database.rules.json` are recorded in the PR; any limit or size error stops work and returns to design review (acceptance gate, 2.1).
 
 Other tests:
 
-- Migration script unit tests (no network, mocked Admin SDK): hex-to-Buffer conversion and rejection of malformed hashes; username normalization and collisions; canonical checksum; the write guard rejecting `teams`, `settings` and every legacy-only path; dry-run writing nothing; **add-only: a different existing value is reported as a conflict and not overwritten; `run` refusing after `mark-cutover`; `--mirror` refused after `mark-cutover`**; `run` aborting without `--hash-test-passed`; `plan` reporting out-of-domain values; `verify` listing new-only entries separately.
+- Migration script unit tests (no network, mocked Admin SDK): role/team reconciliation conflicts abort `run` and `--prefer arrays` resolves them with the arrays winning; terminated users and roster-less keys get roster entries and the unmatched count is zero; legacy users missing `terminated`, `isManager`, `username` or `registeredAt` get the defaults and pass the seven-field check; empty or colliding usernames get deterministic suffixes; terminated users are imported without `disabled`; `clear-cutover` requires `--yes` and re-enables `run`; `delete-auth-user` refuses when a profile exists; the CSV goes to `--out-dir` and is encrypted with `--encrypt-csv`; hex-to-Buffer conversion and rejection of malformed hashes; username normalization and collisions; canonical checksum; the write guard rejecting `teams`, `settings` and every legacy-only path; dry-run writing nothing; **add-only: a different existing value is reported as a conflict and not overwritten; `run` refusing after `mark-cutover`; `--mirror` refused after `mark-cutover`**; `run` aborting without `--hash-test-passed`; `plan` reporting out-of-domain values; `verify` listing new-only entries separately.
 - App logic tests in plain Node with stub `database`/`auth`: `MODE` selection (undefined `SECURITY_MODE`, `"Secure"`, `true`, `"secure"`), login candidate-username fallback, the four-step registration including rollback at each step, the self-move payload, listener set per role (unassigned never gets team-wide), `lockApp` cleanup.
 - Static checks: `node --check` on `app.js`, `firebase-config.js`, the script and the tests; JSON validity of `database.rules.json`; a check that the expanded rules contain no unexpanded macro name.
 - Manual (user, staging then live after R10): log in as each role; confirm an Admin of team A cannot see team B in the UI and that `database.ref('teamData/<B>').once('value')` from the console is denied; edit `attendance_current_user` in localStorage and confirm no change in authority; logout leaves nothing readable; legacy mode (flag reverted in staging) behaves exactly as before the change. Enumeration protection: with it on, register a user whose generated username collides and confirm a suffixed username is still allocated.
@@ -536,7 +579,7 @@ Other tests:
 
 - **Client code is always visible** and the Firebase config is public. That is fine once rules are correct; the correctness of `database.rules.json` is the whole security boundary, which is why the rules tests are mandatory and why the emulator results (not this document's reasoning) are the evidence. The rule semantics in section 7 (cascade, `replace`, lookup counts) were reasoned from the documented model and **not executed here**.
 - **Open registration.** Anyone can register and self-select any team (current behaviour). An outsider with the config can join Team A as an Employee; with `everyoneSeesAll` on, that Employee reads Team A's attendance. Recommendation: keep the toggle off, or add approval (Q3). Not changed here because it would change sign-up behaviour. Unlimited scripted creation of Auth accounts is possible with the public config; accounts without a profile have no data access but consume the Auth user list and can be spammed. App Check (below) is the mitigation.
-- **Name squatting.** The first registrant of an unclaimed roster name gets it (as today). The `memberOwners` claim also lets an attacker with an Auth account burn a few names before registering a profile (the claim is limited to accounts without a profile and is deletable by its owner). The Superuser clears orphan claims with `clear-claim`. A team-less user can create one self-keyed roster entry in any team before being assigned (7.4); the Admin can remove it.
+- **Name squatting.** The first registrant of an unclaimed roster name gets it (as today). The `memberOwners` claim also lets an attacker with an Auth account burn any number of unclaimed names (there is no per-account cap, and Auth accounts can be created at will with the public config), although a claim is limited to accounts without a profile and is deletable by its owner. `plan` and `verify` list claims whose uid has no profile. The Superuser clears orphan claims with `clear-claim`. A team-less user can create one self-keyed roster entry in any team before being assigned (7.4); the Admin can remove it.
 - **No self-service password reset and no in-app Admin reset** (4.5). Operationally a Superuser dependency.
 - **Weak passwords.** Minimum 6 characters. Firebase Auth throttles brute force but does not eliminate it.
 - **Username enumeration.** Login uses one error message. Registration reveals taken usernames through `auth/email-already-in-use`, which the candidate loop depends on, and the loop makes this cheap to probe. Email enumeration protection may hide this, but I could not verify whether it changes the create-user error, so it is a staging-tested, post-cutover step (R4, R11, Q10), not a precondition. Team names are public by design (5.1).
@@ -554,7 +597,7 @@ Other tests:
 - **Q2. Collect real email addresses to enable self-service reset on the free plan?** Default: no. Firebase can send reset mail on Spark, but it needs the Auth email to be the real address, which means login by email or a public username-to-email lookup (privacy cost).
 - **Q3. Require approval for new registrations?** Default: no, to preserve behaviour; the risk is stated in section 14. A later `settings/registrationOpen` switch would be additive.
 - **Q4. Password minimum 6 (Firebase-imposed).** Default: yes.
-- **Q5. Restored members keep their password (no forced reset).** Default: yes, since an Admin cannot set one.
+- **Q5. Restored members are asked to choose a new password at next login (parity with legacy) but keep the old one until then.** Default: yes; an Admin cannot set a password for them.
 - **Q6. Retention of old nodes after cutover.** Default: keep at least 2 weeks, delete only on explicit approval.
 - **Q7. Login by full name for users with numeric username suffixes.** Default: unsupported, username required (4.1).
 - **Q8. Peer-Admin management** (REQUIREMENTS Q13). Default: unchanged; same-team Admins can manage each other, never the Superuser (`ADMIN_OF` excludes Superusers and self).
@@ -562,12 +605,15 @@ Other tests:
 - **Q10. Email enumeration protection.** Default: test in staging (R4); enable after cutover only if registration still allocates suffixed usernames; otherwise leave off and accept the residual.
 - **Q11. Self-service team pick after registration (login 6a).** Default: keep, as today, implemented as the atomic self move so the user's own history moves with them. The alternative (Superuser-only assignment) would change visible behaviour and is not chosen.
 - **Q12. `--allow-invalid` for out-of-domain legacy data.** Default: not allowed; fix the data in the legacy app first.
+- **Q13. Manager flagged but with no team (review 2, finding 5): should such a user be able to pick a team themselves?** Today they can (`canSelfAssignTeam` excludes only Admin and Superuser), and the rules as written here would let the first pick give them Manager read access to that whole team. Recommended default: no. Add `isManager !== true` to the `teamId` self-assignment `.write` and to `canSelfAssignTeam`, so a Manager waits for the Superuser to assign a team. This changes what such a user sees (no team picker), so it is **not applied in this revision and awaits approval**. Behaviour-preserving alternative: leave it as is and accept the residual that a team-less Manager can choose a team and read it; the Superuser avoids it by assigning a team before setting the Manager flag.
 
 ## 16. Files the implementation will add or change
 
-`database.rules.json` (new), `database.rules.test.js` and `package.json` for tests (new), `tools/migrate-to-secure/` (new: `migrate.js`, `package.json`, README, unit tests), `firebase-config.js` (flag, auth init, guarded `connectionTest`), `index.html` (auth SDK tag, set-password prompt, request-reset wording), `app.js` (`MODE`, data access layer, auth flows, listeners), `.gitignore` (`migration-temp-passwords-*.csv`, service-account key patterns), and docs: `DOCUMENTATION.md`, `README.md`, `DEPLOYMENT.md` (replace the stale open-until-2026-08-21 statement), `FUTURE-ENHANCEMENTS.md` (mark implemented-in-code-pending-migration, link the runbook).
+`database.rules.json` (new), `database.rules.test.js` and `package.json` for tests (new), `tools/migrate-to-secure/` (new: `migrate.js`, `package.json`, README, unit tests), `firebase-config.js` (flag, auth init created only in secure mode, guarded `connectionTest`), `index.html` (auth SDK tag, set-password prompt, request-reset wording), `app.js` (`MODE`, data access layer, auth flows, listeners), `.gitignore` (`migration-temp-passwords-*.csv`, service-account key patterns), and docs: `DOCUMENTATION.md`, `README.md`, `DEPLOYMENT.md` (replace the stale open-until-2026-08-21 statement), `FUTURE-ENHANCEMENTS.md` (mark implemented-in-code-pending-migration, link the runbook).
 
-## 17. Responses to design review findings (iteration 1)
+## 17. Responses to design review findings
+
+### Part A. Iteration 1 review
 
 All 17 findings were addressed. None required a change to what users see beyond what the design already documented, so no behaviour-change approval was needed.
 
@@ -590,3 +636,22 @@ All 17 findings were addressed. None required a change to what users see beyond 
 17. **NIT, misaligned step lists: fixed.** One runbook (section 10); the manual-steps section (12) uses the same R-numbers and includes the Superuser check and the hash gate.
 
 Additional correction found while writing the rules (not in the review): iteration 1 created the profile, claim and roster entry in one multi-path write, which cannot pass because rules evaluate against the pre-write state. Registration is now four sequenced writes with a failure path for each (4.3).
+
+
+### Part B. Iteration 2 review (15 findings)
+
+1. **HIGH, migration reads roles/teams from the wrong sources: addressed.** Section 9 "Source of truth and reconciliation": `isAdmin` from `admins` (or `SUPER_ADMIN`), `isManager` from `managers`, `teamId` from `memberTeams` then `users.teamId`; `plan` lists every disagreement; `run` aborts unless `--prefer arrays`; `verify` rechecks against the arrays.
+2. **HIGH, terminated and roster-less data had no destination: addressed.** "Roster construction": roster entries for `teamMembers`, for every terminated user (`terminated: true`) and for every key with attendance or leaves but no roster entry; `order` from the array index then ascending name; zero unmatched required by `run` and `verify`.
+3. **HIGH, disabled Auth accounts cannot be restored: addressed.** Terminated users are imported enabled; the script never sets `disabled`; enforcement is the profile flag (9, 5.3). This also removes the conflict with 2.1.
+4. **MEDIUM, lookup/size fallback was not a decision: addressed.** Decision in 2.1: no denormalized summary node, with a recorded acceptance gate (rules byte size plus emulator results for the three worst cases); a failure stops work and returns to design review. Reason given there.
+5. **MEDIUM, team-less Manager can self-assign a team: not applied, awaiting approval.** The fix (`isManager !== true` in the self-assignment rule and in `canSelfAssignTeam`) removes the team picker for such a user, which is a visible change. It is recorded as Q13 with the behaviour-preserving alternative and its residual. The rules, matrix and tests in this document are unchanged for this point until it is approved.
+6. **MEDIUM, no re-cutover path: addressed.** `clear-cutover --yes` added (9); section 11 "Retrying after a rollback" gives the sequence with `export-new` as the backup.
+7. **MEDIUM, interrupted-registration repair unspecified: addressed by dropping the path.** The fresh-profile wording is removed. Login signs out with "Account not set up. Contact admin."; the Superuser repairs with `clear-claim` and the new `delete-auth-user` (4.2, 4.3, 9).
+8. **MEDIUM, legacy users lack mandatory profile fields: addressed.** "Profile defaults" in section 9 sets every field, defines username normalization and collision handling, writes the username list for the announcement, and `plan`/`verify` fail on profiles violating the seven-field rule.
+9. **MEDIUM, pre-added member registering under another team forks data: addressed with option (a).** Documented as a behaviour change (10.1 table and note); `verify` reports a `memberKey` in more than one team; the Superuser move reconciles. Option (b), a public hint node, is recorded as considered and not chosen.
+10. **NIT, squatting wording: fixed** in section 14; `plan` and `verify` list orphan claims.
+11. **NIT, username not bound to Auth email: fixed.** Documented as a display copy (section 3); `verify` compares it with the Auth email as a warning.
+12. **NIT, Auth init must be gated: fixed** in 4.0 and section 16.
+13. **NIT, CSV mode on Windows: fixed.** `--out-dir`, ACL instructions, optional `--encrypt-csv`, delete-after-use reminder (9, 12).
+14. **NIT, regex support and `unassigned` team id: fixed.** Fallbacks for `KEYRE` and `\d` stated in 7.1; `teams/$teamId` validate now blocks `unassigned`; test added.
+15. **NIT, terminate/restore deltas: addressed with parity rules.** The behaviour table is 10.1. Terminate also sets `isAdmin` false (Admin may write `false` only), restore sets `mustResetPassword` true (Admin may write `true` only), matching legacy. Rules, matrix, tests and Q5 updated. The only remaining differences are that an Admin cannot set a temporary password and that the old password keeps working until the member changes it.
