@@ -116,6 +116,7 @@
                     </div>
                     <div class="team-form">
                         <input type="text" id="memberName" placeholder="Enter full name (e.g., John Doe)">
+                        <select id="memberTeam" class="member-team-select" title="Team for the new member" style="display:none;"></select>
                         <button class="btn-primary" id="btnAddMember" onclick="document.dispatchEvent(new CustomEvent('addMemberClick'))">+ Add Member</button>
                     </div>
                     <div class="admin-settings" id="adminSettings" style="display:none;">
@@ -157,7 +158,7 @@
                         <p>Download attendance data as JSON and share it in your Teams channel for others to import.</p>
                         <button class="btn-primary">Download & Share</button>
                     </div>
-                    <div class="sync-card" id="syncImport">
+                    <div class="sync-card" id="syncImport" style="display:none;">
                         <div class="sync-icon">📥</div>
                         <h4>Import from Team</h4>
                         <p>Import the latest JSON file shared by your team admin to sync your data.</p>

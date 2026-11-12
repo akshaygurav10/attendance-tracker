@@ -52,8 +52,9 @@ A real-time team attendance tracking application with a Jira-style dark/light UI
 - **Attendance %** — (Days Attended / Working Days) × 100
 - **Motivation Message** — Random WFH motivation message when 60% is completed
 
-### Team Management (Admin only)
-- **Add members** — Type name and click "Add Member"
+### Team Management (Admin, own team)
+- **Add members** — Type name and click "Add Member". An Admin's new member is always created in the Admin's own team (an Admin with no team cannot add members). The Super Admin can pick a team in a dropdown next to the name box.
+- **Scope** — An Admin sees and manages only members of their own team; the Super Admin sees all
 - **Remove members** — Soft-delete (marked as terminated, can be restored)
 - **Edit names** — Click ✏️ to rename (data transfers to new name)
 - **Drag to reorder** — Drag the ☰ handle to rearrange member order
@@ -61,18 +62,19 @@ A real-time team attendance tracking application with a Jira-style dark/light UI
 - **Admin / Manager / Team roles** — only the Super admin can promote/demote admins, set Managers and assign teams
 - **Reset password** — Admin clicks 🔑 → password resets to `Temp@123`
 
-### Reports (Admin only)
+### Reports (Admin, own team)
 - **Monthly Dashboard Report** — Visual report with KPI cards, progress bars, status badges
 - **Copy to Clipboard** — Copies rich HTML, paste directly into Outlook/Teams
 - **Send Email** — Opens .eml file with dashboard in Outlook
 - **Sortable columns** — Click column headers to sort by Name, Days Attended, %, Status
 
-### Holidays (Admin only)
+### Holidays (Super Admin only by default)
+- Controlled by `ADMIN_CAN_EDIT_HOLIDAYS` in `app.js` (default `false`). Holidays are one global list shared by all teams. Admins still see holidays on the calendar. Open question for the user: should team Admins edit holidays? See `REQUIREMENTS-teams-roles.md`.
 - **Pre-loaded** — Indian 2026 holidays included
 - **Add/Remove** — Manage holidays from the Holidays view
 - **Current month highlight** — This month's holidays shown with cyan badge
 
-### Visibility Settings (Admin only)
+### Visibility Settings (Super Admin only)
 - **"Everyone sees everyone's data" toggle** — In Manage Team
 - **Enabled** — All users see all team members, summary visible
 - **Disabled** — Users only see their own calendar, summary hidden
@@ -93,7 +95,7 @@ A real-time team attendance tracking application with a Jira-style dark/light UI
 
 ### Super Admin (Akshay Gurav)
 - Cannot be removed as admin
-- Can edit everyone's attendance
+- Can edit everyone's attendance (all teams)
 - Can add/remove/edit team members
 - Only role that can create, rename and delete **teams** (Manage Team → Teams)
 - Only role that can assign a user's team after registration and grant/revoke **Manager** and **Admin**
@@ -104,26 +106,26 @@ A real-time team attendance tracking application with a Jira-style dark/light UI
 - Sees all team members always
 
 ### Admin (Promoted by Super Admin)
-- Can edit everyone's attendance
-- Can add/remove/edit team members
-- Can reset passwords
-- Can manage holidays
-- Cannot grant or remove Admin/Manager roles or change teams (Super Admin only)
-- Global scope: not limited to a team
+- Sees and edits attendance of **members of their own team only** (plus themselves); cannot see other teams
+- Can add/remove/edit/restore team members and reset passwords, for their own team only; new members are created in their own team
+- Can use Monthly Report and export for their own team only
+- Cannot manage holidays (unless `ADMIN_CAN_EDIT_HOLIDAYS` is switched on), change the visibility toggle, import data or reset the roster (Super Admin only)
+- Cannot grant or remove Admin/Manager roles or change teams (Super Admin only), and cannot edit or remove the Super Admin
+- An Admin with no team sees only themselves until the Super Admin assigns one
 
 ### Manager (assigned by Super Admin)
 - Sees the attendance and Summary of **all members of their own team**, read-only
 - Cannot see other teams' members or unassigned users
 - Cannot edit other members' attendance, and has no Holidays, Manage Team, Sync or Monthly Report
 - Edits their own attendance like a regular user
-- A user can be **Admin + Manager**: they get everything an Admin can do (Admin rules win)
+- A user can be **Admin + Manager**: they get everything an Admin can do, within their own team only
 
 ### Teams
 - Super Admin creates teams. New users pick a team on the Register form (required once teams exist); the login form only fills a team for users who have none yet
 - The team picker lists team names only; no attendance or user data is loaded before login
 - Existing users with no team are "Unassigned" (they see only themselves) until the Super Admin assigns one
 - Deleting a team makes its members Unassigned; no users or attendance are deleted
-- When "Everyone sees everyone's data" is on, non-admins now see only their own team
+- When "Everyone sees everyone's data" is on, non-admins see only their own team. Only the Super Admin can change this toggle
 
 > Permission checks run in the browser. Without Firebase Authentication and matching database rules they do not stop someone calling Firebase directly. See *Recommended security rules* in DEPLOYMENT.md.
 
@@ -134,15 +136,16 @@ A real-time team attendance tracking application with a Jira-style dark/light UI
 | Create / rename / delete teams | Yes | No | No | No | No |
 | Assign teams, grant Manager / Admin | Yes | No | No | No | No |
 | View own data | Yes | Yes | Yes | Yes | Yes |
-| View other members | All | All | Own team | All | Own team only if "Everyone sees everyone's data" is on, else none |
+| View other members | All | Own team | Own team | Own team | Own team only if "Everyone sees everyone's data" is on, else none |
 | Edit own attendance | Yes | Yes | Yes | Yes | Yes |
-| Edit others' attendance | Yes | Yes | No | Yes | No |
-| Holidays | Yes | Yes | No | Yes | No |
-| Manage Team (add/remove/rename/restore/reset password/reorder) | Yes | Yes | No | Yes | No |
-| Summary | All | All | Own team | All | Own team, only if toggle on |
-| Monthly Report / Sync | Yes | Yes | No | Yes | No |
+| Edit others' attendance | Yes | Own team | No | Own team | No |
+| Holidays | Yes | No (flag `ADMIN_CAN_EDIT_HOLIDAYS`) | No | No (flag) | No |
+| Manage Team (add/remove/rename/restore/reset password/reorder) | Yes | Own team | No | Own team | No |
+| Summary | All | Own team | Own team | Own team | Own team, only if toggle on |
+| Monthly Report / Sync export | Yes (all) | Own team | No | Own team | No |
+| Import data, reset roster, visibility toggle | Yes | No | No | No | No |
 
-Unassigned users (no team) see only themselves, whatever their flags, unless they are Admin or Super Admin.
+Unassigned users (no team) see only themselves, whatever their flags, including Admins. Only the Super Admin sees all teams.
 
 ### Regular User
 - Can only edit their own attendance
@@ -327,14 +330,14 @@ Firebase config is stored in `firebase-config.js`. See that file for the full co
 ```
 [Logo] Attendance Tracker 🟢Synced  |  [agurav 👑 (Platform) | 🔑 Password | ⇄ Logout]  [☀️Light] [🔄Sync] [📧Report]
 ```
-- Team name shown in brackets after the username: own team, `All Teams` for Admin/Super Admin, `No team` if unassigned
+- Team name shown in brackets after the username: own team, `All Teams` for the Super Admin only, own team name for everyone else, `No team` if unassigned
 - Sync indicator: 🟢 Synced / 🔴 Offline
 - Password, Logout, Sync, Report buttons
 - Sync & Report hidden for non-admin
 
 ### Sidebar
-- Team Members list (logged-in user on top with "(You)" tag). The heading shows the viewer's team, e.g. `Team Members - Platform`, `Team Members - All Teams` (Admin/Super Admin) or `Team Members - No team`. Admins also see a `[Team]` tag on each member.
-- Views: Calendar, Summary (visibility-dependent), Holidays (admin), Manage Team (admin)
+- Team Members list (logged-in user on top with "(You)" tag). The heading shows the viewer's team, e.g. `Team Members - Platform`, `Team Members - All Teams` (Super Admin only) or `Team Members - No team`. Only the Super Admin sees a `[Team]` tag on each member.
+- Views: Calendar, Summary (visibility-dependent), Holidays (Super Admin by default), Manage Team (Admin, own team)
 - Legend: Present, WFH, WFH Email, Leave, Exception, Weekend, Holiday, Today
 
 ### Calendar View
@@ -374,7 +377,7 @@ Summary of behavior is in *User Roles* and the *Permission Matrix* above; requir
 - Sign-up: team dropdown (names only, read from `teams` before login). Required once any team exists. New accounts always start with `isAdmin: false` and no Manager flag.
 - Login: the team dropdown only fills a team for users who have none; it never changes an existing team.
 - Manager: read-only view of own team (members, calendar, Summary). Manager is not offered Holidays, Manage Team, Sync or Monthly Report, and those functions refuse when called anyway. Own attendance is editable.
-- Admin + Manager: Admin rules apply (global scope, full edit).
+- Admin + Manager: Admin rules apply within the user's own team (see *Team-scoped Admin* below).
 - "Everyone sees everyone's data" is now team-scoped for non-admins.
 - Existing users without a team are Unassigned until the Super Admin assigns one. Deleting a team makes its members Unassigned.
 - Permissions are recomputed on login and on every listener update, and cleared on logout.
@@ -383,7 +386,7 @@ Summary of behavior is in *User Roles* and the *Permission Matrix* above; requir
 1. As Super Admin: create teams A and B; Manage Team → assign users, mark one user Manager of team A.
 2. Register a new user: the team dropdown lists A and B; registration requires a pick.
 3. Log in as the Manager: only team A members appear; calendars are "View Only" for others; Holidays and Manage Team are absent; own calendar is editable.
-4. Make the same user Admin too: all members appear and editing, Holidays and Manage Team work. Remove Manager only: still Admin.
+4. Make the same user Admin too: team A members appear and editing and Manage Team work for team A only; Holidays stays hidden. Remove Manager only: still Admin.
 5. As Admin (not Super Admin): no team or role controls. As Employee: only self (or own team with the toggle on).
 6. Log in as an existing user with no team: shows "No team", sees only self.
 
@@ -408,17 +411,17 @@ Summary of behavior is in *User Roles* and the *Permission Matrix* above; requir
     },
     "attendanceByMember": {
       "$memberKey": {
-        ".read": "auth.token.admin === true || auth.token.superuser === true || auth.token.name === $memberKey || (auth.token.manager === true && data.child('teamId').val() === auth.token.teamId)",
-        ".write": "auth.token.admin === true || auth.token.superuser === true || auth.token.name === $memberKey"
+        ".read": "auth.token.superuser === true || auth.token.name === $memberKey || ((auth.token.manager === true || auth.token.admin === true) && data.child('teamId').val() === auth.token.teamId)",
+        ".write": "auth.token.superuser === true || auth.token.name === $memberKey || (auth.token.admin === true && data.child('teamId').val() === auth.token.teamId)"
       }
     },
-    "holidays": { ".read": "auth != null", ".write": "auth.token.admin === true || auth.token.superuser === true" }
+    "holidays": { ".read": "auth != null", ".write": "auth.token.superuser === true" }
   }
 }
 ```
 
 ### Known limitations (non-blocking review findings)
-- All enforcement is client-side against an open database (above).
+- All enforcement is client-side against an open database (above). **Firebase rules are NOT deployed.** Admin team scoping is client-side only: with one `appData` blob keyed by member name, rules cannot allow reading one team's members and hide another's without restructuring (for example `attendanceByTeam/{teamId}/{member}`) plus Firebase Auth.
 - A Manager/Admin flag set on a name that has not registered yet applies to whoever registers that name first. Register users before flagging them.
 - Renaming a member does not migrate their team, Manager flag or `users` record, so they show as Unassigned afterwards.
 - If `SUPER_ADMIN` is not yet registered, anyone can register that name (pre-existing).
@@ -427,16 +430,37 @@ Summary of behavior is in *User Roles* and the *Permission Matrix* above; requir
 
 ---
 
+## Team-scoped Admin (2026-11-12)
+
+An Admin sees and manages only members whose team equals the Admin's team; the Super Admin stays global; a Manager is unchanged (own team, read-only, no edit, no Holidays, no Manage Team). Admin + Manager is the union, still inside the Admin's own team.
+
+- Enforced inside the functions, not only in the UI: `editMember`, `removeMember`, `resetPasswordForMember`, `restoreMember`, `addMember`, `reorderMembers`, `markAttendance`, `markLeave`, `removeLeave`, report and export generation all check the target (`canAdminMember` / `canAdminTeamId`) and refuse otherwise. Calling them from the browser console on another team's member shows an alert and changes nothing.
+- No privilege escalation: Admins cannot change roles or teams (the login/register team picker is skipped for Admins, so a team-less Admin stays self-only until the Superuser assigns a team), an Admin can still edit/remove/reset the password of another Admin in the same team (open question 13 in REQUIREMENTS-teams-roles.md), cannot add members to another team, cannot edit/remove the Super Admin, cannot remove themselves, cannot import data (import replaces the whole data blob).
+- Admin export contains only the Admin's team (attendance and leaves) plus global holidays.
+- **Holidays (open question for the user):** global list, so Super Admin only by default. Set `ADMIN_CAN_EDIT_HOLIDAYS = true` in `app.js` to let Admins edit it.
+- **Security honesty:** Firebase rules are NOT deployed and there is no Firebase Auth. Anyone with the Firebase config can still read every team's data directly. This scoping limits honest use only. With one `appData` blob, rules cannot enforce team-scoped reads without restructuring.
+
+**How to test manually**
+1. Team A Admin: sidebar, Summary, Manage Team and Monthly Report list only Team A members; Team B members never appear. Heading shows `Team Members - <team A name>` and there are no `[Team]` tags.
+2. Admin with no team: sees only themselves, Manage Team shows the "ask the Superuser" notice, Add Member is refused.
+3. Direct calls on other-team members are rejected: in the console run `app.editMember('<Team B member>')`, `app.removeMember(...)`, `app.resetPasswordForMember(...)`, `app.data.markAttendance('<Team B member>', '2026-01-05', true)`; each shows a denial and changes nothing.
+4. Admin adds a member: it lands in the Admin's team and is invisible to Team B's Admin.
+5. Admin has no Holidays nav, no visibility toggle, no import card in Sync.
+6. Super Admin still sees all teams, `All Teams` and `[Team]` tags.
+7. Logout, then log in as another user: nothing from the previous session remains.
+
+---
+
 ## Team Name Display (2026-11-12, commit 0162eda)
 
 - The signed-in user's team shows beside the **Team Members** heading (`Team Members - Platform`) and in the header user info (`agurav 👑 (Platform)`).
-- Label rules: own team name; `All Teams` for Admin and Super Admin (including Admin + Manager); `No team` when unassigned or the team no longer exists.
-- Admins also see a `[Team]` tag (or `[No team]`) on each member in the sidebar list.
+- Label rules: own team name; `All Teams` for the Super Admin only (Admins, including Admin + Manager, see their own team name); `No team` when unassigned or the team no longer exists.
+- Only the Super Admin sees a `[Team]` tag (or `[No team]`) on each member in the sidebar list.
 - Labels are set with `textContent` and cleared on logout (`teamHeadingLabel` is emptied in `lockApp()`); they refresh when teams or assignments change.
 
 **How to test manually**
 1. Log in as a user in team A: heading and header show `Platform`-style team name.
-2. Log in as Admin or Super Admin: `All Teams`, and `[Team]` tags on members.
+2. Log in as Super Admin: `All Teams`, and `[Team]` tags on members. Log in as an Admin: their own team name, no tags.
 3. Log in as an unassigned user: `No team`.
 4. Super Admin renames or reassigns a team while a user is logged in: label updates.
 5. Logout: no team name remains on screen.
@@ -452,7 +476,7 @@ Summary of behavior is in *User Roles* and the *Permission Matrix* above; requir
 | Forgot password | Contact admin for reset to `Temp@123`. |
 | Data not saving | Check 🟢/🔴 indicator. Ensure Firebase rules allow writes. |
 | Can't see other members | Admin needs to enable "Everyone sees everyone's data" toggle. |
-| Can't edit others' calendar | Only admin can edit others. Regular users edit only their own. |
+| Can't edit others' calendar | Only an Admin can edit others, and only members of their own team. Regular users edit only their own. |
 | Add Member not working | Ensure you're logged in as admin. Check browser console for errors. |
 | Future days not clickable | Only next 2 months are plannable. Beyond that stays locked. |
 
@@ -465,6 +489,7 @@ Summary of behavior is in *User Roles* and the *Permission Matrix* above; requir
 - **feat (88de19b):** Teams, Manager role and Super Admin role assignment; team picker on register/login; Manager read-only team view; Admin + Manager union; team-scoped visibility toggle
 - **feat (0162eda):** Team name beside "Team Members" and in header user info (`All Teams` / `No team` cases)
 - **docs:** Added permission matrix, data model notes, undeployed security rules, limitations and manual test checklists
+- **feat:** Admin visibility is team-scoped (own team only); holidays, visibility toggle and import are Superuser-only; Admin with no team sees only self. Every edit/manage/add/remove/restore/reset-password/export function checks the target is in the actor's team. Firebase rules still not deployed.
 
 ### Earlier
 - Firebase Realtime Database integration for shared data

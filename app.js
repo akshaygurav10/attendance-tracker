@@ -92,6 +92,10 @@ let TEAMS = {};         // teamId -> { id, name, createdBy, createdAt }
 let MEMBER_TEAMS = {};  // sanitized member name -> teamId
 let MANAGERS = [];      // full names with the Manager flag
 
+// Open question (see REQUIREMENTS-teams-roles.md): may team Admins edit the
+// GLOBAL holidays list? Default false = Superuser only. Flip to true to allow.
+let ADMIN_CAN_EDIT_HOLIDAYS = false;
+
 function nameKey(name) {
     return String(name).replace(/\./g, '___DOT___');
 }
@@ -124,11 +128,52 @@ function getTeamName(teamId) {
     return (teamId && TEAMS && TEAMS[teamId] && TEAMS[teamId].name) || null;
 }
 
-// Team label for the signed-in user: own team, 'All Teams' for admins, else 'No team'
+// Team label for the signed-in user: own team, 'All Teams' for the Superuser only, else 'No team'
 function getMyTeamLabel() {
     if (!getCurrentUser()) return '';
-    if (isAdmin()) return 'All Teams';
+    if (isSuperUser()) return 'All Teams';
     return getTeamName(getMyTeamId()) || 'No team';
+}
+
+// Admin who is not the Superuser: scoped to their own team
+/** Only ordinary users may pick their own first team; Admins/Superuser are assigned by the Superuser. */
+function canSelfAssignTeam(name, userData) {
+    if (!name || name === SUPER_ADMIN) return false;
+    return !(ADMIN_MEMBERS.includes(name) || (userData && userData.isAdmin));
+}
+
+function isTeamAdmin() {
+    return isAdmin() && !isSuperUser();
+}
+
+// Members the current user administers (edit/manage/report).
+// Superuser: everyone. Admin: self + own team (self only when unassigned).
+function getAdminScopeMembers() {
+    const user = getCurrentUser();
+    if (!user || !isAdmin()) return [];
+    if (isSuperUser()) return [...TEAM_MEMBERS];
+    const myTeam = getMyTeamId();
+    return TEAM_MEMBERS.filter(m => m === user || (!!myTeam && getMemberTeamId(m) === myTeam));
+}
+
+// May the current user administer this member? Checked by every action function.
+function canAdminMember(name) {
+    const user = getCurrentUser();
+    if (!name || !user) return false;
+    if (isSuperUser()) return true;
+    if (name === SUPER_ADMIN) return false;
+    if (!isAdmin()) return false;
+    if (name === user) return true;
+    const myTeam = getMyTeamId();
+    return !!myTeam && getMemberTeamId(name) === myTeam;
+}
+
+// May the current user administer members of this team id?
+function canAdminTeamId(teamId) {
+    if (isSuperUser()) return true;
+    if (!isAdmin()) return false;
+    const myTeam = getMyTeamId();
+    return !!teamId && !!myTeam && teamId === myTeam;
 }
 
 function everyoneSeesAllEnabled() {
@@ -136,14 +181,15 @@ function everyoneSeesAllEnabled() {
     return !!(toggle && toggle.checked);
 }
 
-// Members the current user may see. Admin: all. Manager: own team + self.
+// Members the current user may see. Superuser: all. Admin and Manager: own team + self.
 // Others: self, plus own team when "everyone sees everyone" is on.
+// A user with no team sees only themselves (never falls back to global).
 function getVisibleMembers() {
     const user = getCurrentUser();
     if (!user) return [];
-    if (isAdmin()) return [...TEAM_MEMBERS];
+    if (isSuperUser()) return [...TEAM_MEMBERS];
     const myTeam = getMyTeamId();
-    const teamScoped = !!myTeam && (isManager() || everyoneSeesAllEnabled());
+    const teamScoped = !!myTeam && (isAdmin() || isManager() || everyoneSeesAllEnabled());
     return TEAM_MEMBERS.filter(m => m === user || (teamScoped && getMemberTeamId(m) === myTeam));
 }
 
@@ -155,14 +201,15 @@ function canViewSummary() {
     return isAdmin() || isManager() || everyoneSeesAllEnabled();
 }
 
-function canManageHolidays() { return isAdmin(); }
+function canManageHolidays() { return isSuperUser() || (ADMIN_CAN_EDIT_HOLIDAYS && isAdmin()); }
+function canImportData() { return isSuperUser(); }
 function canManageTeam() { return isAdmin(); }
 function canUseReports() { return isAdmin(); }
 function canManageTeams() { return isSuperUser(); }
 function canAssignRoles() { return isSuperUser(); }
 
 function denyAction(message) {
-    alert('⚠️ ' + message);
+    alert('âš ï¸ ' + message);
 }
 
 // ==========================================
@@ -219,11 +266,10 @@ async function generateUniqueUsername(fullName) {
 }
 
 function canEdit(member) {
-    // Admin (incl. Superuser): anyone. Everyone else (Manager included): own data only.
+    // Superuser: anyone. Admin: own team. Everyone else (Manager included): own data only.
     const currentUser = getCurrentUser();
     if (!currentUser || !member) return false;
-    if (isAdmin()) return true;
-    return currentUser === member;
+    return currentUser === member || canAdminMember(member);
 }
 
 // ==========================================
@@ -311,7 +357,7 @@ class AttendanceData {
                     // Keep localStorage in sync
                     localStorage.setItem('attendance_tracker_data', JSON.stringify(this.data));
                 } else if (!this.firebaseReady) {
-                    // First time — push local data to Firebase
+                    // First time â€” push local data to Firebase
                     this.saveToFirebase();
                 }
                 this.firebaseReady = true;
@@ -328,7 +374,7 @@ class AttendanceData {
                     localStorage.setItem('attendance_team_members', JSON.stringify(TEAM_MEMBERS));
                     if (this.onDataLoaded) this.onDataLoaded();
                 } else {
-                    // No team members in Firebase — start fresh
+                    // No team members in Firebase â€” start fresh
                     TEAM_MEMBERS = [];
                     localStorage.setItem('attendance_team_members', JSON.stringify([]));
                 }
@@ -413,14 +459,14 @@ class AttendanceData {
             const indicator = document.getElementById('syncIndicator');
             database.ref('appData').set(sanitized).then(() => {
                 if (indicator) {
-                    indicator.textContent = '🟢 Synced';
+                    indicator.textContent = 'ðŸŸ¢ Synced';
                     indicator.className = 'sync-indicator connected';
                     indicator.style.fontSize = '12px';
                 }
             }).catch((error) => {
                 console.error('Firebase save failed:', error);
                 if (indicator) {
-                    indicator.textContent = '🔴 ' + error.message;
+                    indicator.textContent = 'ðŸ”´ ' + error.message;
                     indicator.className = 'sync-indicator disconnected';
                     indicator.style.fontSize = '12px';
                 }
@@ -509,7 +555,7 @@ class AttendanceData {
     }
 
     addHoliday(date, name) {
-        if (!canManageHolidays()) { denyAction('Only admins can manage holidays.'); return; }
+        if (!canManageHolidays()) { denyAction('You do not have permission to manage holidays.'); return; }
         if (!this.data.holidays.find(h => h.date === date)) {
             this.data.holidays.push({ date, name });
             this.data.holidays.sort((a, b) => a.date.localeCompare(b.date));
@@ -518,7 +564,7 @@ class AttendanceData {
     }
 
     removeHoliday(date) {
-        if (!canManageHolidays()) { denyAction('Only admins can manage holidays.'); return; }
+        if (!canManageHolidays()) { denyAction('You do not have permission to manage holidays.'); return; }
         this.data.holidays = this.data.holidays.filter(h => h.date !== date);
         this.save();
     }
@@ -590,12 +636,23 @@ class AttendanceData {
         return Math.round((attended / workingDays) * 100);
     }
 
-    exportJSON() {
-        return JSON.stringify(this.data, null, 2);
+    // memberFilter (array of names) limits attendance/leaves to those members; holidays are global
+    exportJSON(memberFilter) {
+        if (!Array.isArray(memberFilter)) return JSON.stringify(this.data, null, 2);
+        const pick = src => {
+            const out = {};
+            memberFilter.forEach(m => { if (src && src[m] !== undefined) out[m] = src[m]; });
+            return out;
+        };
+        return JSON.stringify({
+            ...this.data,
+            attendance: pick(this.data.attendance),
+            leaves: pick(this.data.leaves)
+        }, null, 2);
     }
 
     importJSON(jsonStr) {
-        if (!canUseReports()) { denyAction('Only admins can import data.'); return false; }
+        if (!canImportData()) { denyAction('Only the Superuser can import data.'); return false; }
         try {
             const imported = JSON.parse(jsonStr);
             if (imported.attendance && imported.holidays) {
@@ -758,7 +815,7 @@ class App {
         });
         ['toggleLoginPw', 'toggleRegPw'].forEach(id => {
             const el = document.getElementById(id);
-            if (el) el.textContent = '👁️';
+            if (el) el.textContent = 'ðŸ‘ï¸';
         });
 
         // Show only the login panel
@@ -766,7 +823,7 @@ class App {
         document.getElementById('registerForm').style.display = 'none';
         document.getElementById('forgotForm').style.display = 'none';
         const title = document.getElementById('authModalTitle');
-        if (title) title.textContent = '🔐 Login';
+        if (title) title.textContent = 'ðŸ” Login';
         document.getElementById('userModal').classList.add('active');
 
         // Permission-bearing UI off until the next login recomputes it
@@ -840,7 +897,7 @@ class App {
     }
 
     populateLoginDropdown() {
-        // No dropdown anymore — just clear the input
+        // No dropdown anymore â€” just clear the input
         const input = document.getElementById('loginUsername');
         if (input) input.value = '';
     }
@@ -962,7 +1019,9 @@ class App {
                 // First team assignment only: a user who already has a team cannot
                 // change it here (only the Superuser can).
                 const pickedTeam = (document.getElementById('loginTeam') || {}).value;
-                if (pickedTeam && matchedUser !== SUPER_ADMIN) {
+                // Admins never pick their own team (that would self-assign admin scope);
+                // only the Superuser assigns an Admin's team.
+                if (pickedTeam && canSelfAssignTeam(matchedUser, userData)) {
                     const hasTeam = (userData && userData.teamId) ||
                         (await database.ref('memberTeams/' + sanitizedName).once('value')).val();
                     if (!hasTeam) {
@@ -1054,7 +1113,8 @@ class App {
             const hash = await hashPassword(password);
             const uname = await generateUniqueUsername(name);
             const existing = (await database.ref('users/' + sanitizedName).once('value')).val() || {};
-            const teamId = existing.teamId || pickedTeam || null;
+            // Admins never self-assign a team; only the Superuser does.
+            const teamId = existing.teamId || (canSelfAssignTeam(name, existing) ? pickedTeam : null) || null;
             const updates = {
                 ['users/' + sanitizedName + '/name']: name,
                 ['users/' + sanitizedName + '/passwordHash']: hash,
@@ -1094,8 +1154,8 @@ class App {
     }
 
     async resetPasswordForMember(member) {
-        if (!isAdmin()) {
-            alert('Only admins can reset passwords.');
+        if (!isAdmin() || !canAdminMember(member)) {
+            alert('You can only reset passwords for members of your own team.');
             return;
         }
         const defaultPassword = 'Temp@123';
@@ -1109,7 +1169,7 @@ class App {
         const user = getCurrentUser();
         const display = document.getElementById('currentUserDisplay');
         if (user) {
-            const badge = isAdmin() ? ' 👑' : '';
+            const badge = isAdmin() ? ' ðŸ‘‘' : '';
             const sanitizedName = user.replace(/\./g, '___DOT___');
             if (typeof database !== 'undefined') {
                 database.ref('users/' + sanitizedName + '/username').once('value').then((snapshot) => {
@@ -1119,9 +1179,9 @@ class App {
                         <span class="user-display-name">${uname}${badge}</span>
                         <span class="user-display-team" id="currentUserTeam"></span>
                         <span class="user-display-sep">|</span>
-                        <span class="user-display-btn" id="btnChangePassword" title="Change password">🔑 Password</span>
+                        <span class="user-display-btn" id="btnChangePassword" title="Change password">ðŸ”‘ Password</span>
                         <span class="user-display-sep">|</span>
-                        <span class="user-display-btn" id="btnLogout" title="Logout">⇄ Logout</span>
+                        <span class="user-display-btn" id="btnLogout" title="Logout">â‡„ Logout</span>
                     `;
                     this.bindUserDisplayEvents(display);
                     this.updateTeamLabels();
@@ -1131,9 +1191,9 @@ class App {
                     <span class="user-display-name">${user}${badge}</span>
                     <span class="user-display-team" id="currentUserTeam"></span>
                     <span class="user-display-sep">|</span>
-                    <span class="user-display-btn" id="btnChangePassword" title="Change password">🔑 Password</span>
+                    <span class="user-display-btn" id="btnChangePassword" title="Change password">ðŸ”‘ Password</span>
                     <span class="user-display-sep">|</span>
-                    <span class="user-display-btn" id="btnLogout" title="Logout">⇄ Logout</span>
+                    <span class="user-display-btn" id="btnLogout" title="Logout">â‡„ Logout</span>
                 `;
                 this.bindUserDisplayEvents(display);
                     this.updateTeamLabels();
@@ -1163,13 +1223,13 @@ class App {
         show('btnTeamView', canManageTeam(), 'block');
         show('btnSyncTeams', canUseReports(), '');
         show('btnEmailReport', canUseReports(), '');
-        show('adminSettings', isAdmin(), 'block');
+        show('adminSettings', isSuperUser(), 'block');
         show('teamsAdmin', canManageTeams(), 'block');
         show('btnSummaryView', canViewSummary(), 'block');
+        show('syncImport', canImportData(), '');
     }
 
     updateUIPermissions() {
-        const admin = isAdmin();
         this.applyRoleVisibility();
         const summaryBtn = document.getElementById('btnSummaryView');
 
@@ -1210,7 +1270,7 @@ class App {
         const storedHash = snapshot.val();
 
         if (oldHash !== storedHash) {
-            alert('❌ Current password is incorrect.');
+            alert('âŒ Current password is incorrect.');
             return;
         }
 
@@ -1222,13 +1282,13 @@ class App {
 
         const confirmPassword = prompt('Confirm new password:');
         if (newPassword !== confirmPassword) {
-            alert('❌ Passwords do not match.');
+            alert('âŒ Passwords do not match.');
             return;
         }
 
         const newHash = await hashPassword(newPassword);
         await database.ref('users/' + sanitizedName + '/passwordHash').set(newHash);
-        alert('✅ Password changed successfully.');
+        alert('âœ… Password changed successfully.');
     }
 
     // --- Team List ---
@@ -1249,8 +1309,8 @@ class App {
             const initials = member.split(' ').map(n => n[0]).join('').substring(0, 2);
             const isActive = member === this.selectedMember ? 'active' : '';
             const isMe = member === currentUser ? '<span class="me-tag">(You)</span>' : '';
-            // Admins see many teams, so tag each member with theirs
-            const teamTag = isAdmin()
+            // Only the Superuser sees many teams, so only they get a per-member team tag
+            const teamTag = isSuperUser()
                 ? ` <span class="member-team-tag">[${escapeHtml(getTeamName(getMemberTeamId(member)) || 'No team')}]</span>`
                 : '';
             return `<li class="${isActive}" data-member="${escapeHtml(member)}">
@@ -1293,11 +1353,11 @@ class App {
         const v = escapeHtml(viewing);
 
         if (isSelf) {
-            info.innerHTML = `<span class="viewing-member editing">📝 Editing: ${v}</span>`;
+            info.innerHTML = `<span class="viewing-member editing">ðŸ“ Editing: ${v}</span>`;
         } else if (canEdit(viewing)) {
-            info.innerHTML = `<span class="viewing-member editing">📝 Admin Editing: ${v}</span>`;
+            info.innerHTML = `<span class="viewing-member editing">ðŸ“ Admin Editing: ${v}</span>`;
         } else {
-            info.innerHTML = `<span class="view-only-tag">👁️ View Only</span> <span class="viewing-member">Viewing: ${v}</span>`;
+            info.innerHTML = `<span class="view-only-tag">ðŸ‘ï¸ View Only</span> <span class="viewing-member">Viewing: ${v}</span>`;
         }
     }
 
@@ -1311,9 +1371,9 @@ class App {
         const statusColor = percentage >= REQUIRED_PERCENTAGE ? 'green' : (percentage >= 40 ? 'orange' : 'red');
 
         const wfhMessages = [
-            "Enjoy your work-from-home days—they're a blessing for both your family and your health. ❤️🏡💻",
-            "Work from home while it lasts. More family time, better health, and a happier life. 🏡❤️",
-            "Enjoy your work-from-home time—it brings you closer to your family and gives you a better work-life balance. 🏡❤️"
+            "Enjoy your work-from-home daysâ€”they're a blessing for both your family and your health. â¤ï¸ðŸ¡ðŸ’»",
+            "Work from home while it lasts. More family time, better health, and a happier life. ðŸ¡â¤ï¸",
+            "Enjoy your work-from-home timeâ€”it brings you closer to your family and gives you a better work-life balance. ðŸ¡â¤ï¸"
         ];
         const motivationMsg = percentage >= REQUIRED_PERCENTAGE
             ? `<div class="motivation-msg">${wfhMessages[Math.floor(Math.random() * wfhMessages.length)]}</div>`
@@ -1379,32 +1439,32 @@ class App {
 
             if (isWeekend) {
                 classes.push('weekend');
-                statusIcon = '🔒';
+                statusIcon = 'ðŸ”’';
                 title = 'Weekend';
             } else if (isHoliday) {
                 classes.push('holiday');
-                statusIcon = '🏖️';
+                statusIcon = 'ðŸ–ï¸';
                 title = this.data.getHolidayName(dateStr);
             } else if (leaveType) {
                 if (leaveType === 'leave') {
                     classes.push('on-leave');
-                    statusIcon = '🚫';
+                    statusIcon = 'ðŸš«';
                     title = 'Leave (not counted as working day)';
                 } else if (leaveType === 'wfh') {
                     classes.push('wfh');
-                    statusIcon = '🏠';
+                    statusIcon = 'ðŸ ';
                     title = 'Work From Home';
                 } else if (leaveType === 'wfh-email') {
                     classes.push('wfh-email');
-                    statusIcon = '📧';
+                    statusIcon = 'ðŸ“§';
                     title = 'WFH Email (excluded from total days)';
                 } else if (leaveType === 'exception') {
                     classes.push('exception');
-                    statusIcon = '⚡';
+                    statusIcon = 'âš¡';
                     title = 'Exception (not counted as working day)';
                 } else if (leaveType === 'planned') {
                     classes.push('planned');
-                    statusIcon = '📋';
+                    statusIcon = 'ðŸ“‹';
                     title = 'Planning to Come';
                 }
                 // Mark future days with leave type as future too
@@ -1412,14 +1472,14 @@ class App {
             } else if (isToday) {
                 if (isPresent) {
                     classes.push('present');
-                    statusIcon = '✅';
+                    statusIcon = 'âœ…';
                 }
             } else if (isFuture) {
                 classes.push('future');
                 if (canPlan) classes.push('plannable');
             } else if (isPresent) {
                 classes.push('present');
-                statusIcon = '✅';
+                statusIcon = 'âœ…';
             }
 
             if (isToday) classes.push('today');
@@ -1448,13 +1508,13 @@ class App {
 
         menu.innerHTML = `
             <div class="menu-title">Mark as:</div>
-            <button class="menu-item ${isPresent && !leaveType ? 'active' : ''}" data-action="present">✅ Present</button>
-            <button class="menu-item ${leaveType === 'leave' ? 'active' : ''}" data-action="leave">🚫 Leave</button>
-            <button class="menu-item ${leaveType === 'wfh' ? 'active' : ''}" data-action="wfh">🏠 Work From Home</button>
-            <button class="menu-item ${leaveType === 'wfh-email' ? 'active' : ''}" data-action="wfh-email">📧 WFH Email</button>
-            <button class="menu-item ${leaveType === 'exception' ? 'active' : ''}" data-action="exception">⚡ Exception</button>
+            <button class="menu-item ${isPresent && !leaveType ? 'active' : ''}" data-action="present">âœ… Present</button>
+            <button class="menu-item ${leaveType === 'leave' ? 'active' : ''}" data-action="leave">ðŸš« Leave</button>
+            <button class="menu-item ${leaveType === 'wfh' ? 'active' : ''}" data-action="wfh">ðŸ  Work From Home</button>
+            <button class="menu-item ${leaveType === 'wfh-email' ? 'active' : ''}" data-action="wfh-email">ðŸ“§ WFH Email</button>
+            <button class="menu-item ${leaveType === 'exception' ? 'active' : ''}" data-action="exception">âš¡ Exception</button>
             <hr>
-            <button class="menu-item" data-action="clear">❌ Clear</button>
+            <button class="menu-item" data-action="clear">âŒ Clear</button>
         `;
 
         // Position menu near the target element
@@ -1512,11 +1572,11 @@ class App {
 
         menu.innerHTML = `
             <div class="menu-title">Plan for this day:</div>
-            <button class="menu-item ${leaveType === 'planned' ? 'active' : ''}" data-action="planned">📋 Planning to Come</button>
-            <button class="menu-item ${leaveType === 'leave' ? 'active' : ''}" data-action="leave">🚫 Leave</button>
-            <button class="menu-item ${leaveType === 'exception' ? 'active' : ''}" data-action="exception">⚡ Exception</button>
+            <button class="menu-item ${leaveType === 'planned' ? 'active' : ''}" data-action="planned">ðŸ“‹ Planning to Come</button>
+            <button class="menu-item ${leaveType === 'leave' ? 'active' : ''}" data-action="leave">ðŸš« Leave</button>
+            <button class="menu-item ${leaveType === 'exception' ? 'active' : ''}" data-action="exception">âš¡ Exception</button>
             <hr>
-            <button class="menu-item" data-action="clear">❌ Clear</button>
+            <button class="menu-item" data-action="clear">âŒ Clear</button>
         `;
 
         const rect = targetEl.getBoundingClientRect();
@@ -1569,11 +1629,11 @@ class App {
             const percentage = this.data.getAttendancePercentage(member, this.currentYear, this.currentMonth);
             let statusClass, statusText, statusOrder;
             if (percentage >= REQUIRED_PERCENTAGE) {
-                statusClass = 'compliant'; statusText = '✓ Compliant'; statusOrder = 1;
+                statusClass = 'compliant'; statusText = 'âœ“ Compliant'; statusOrder = 1;
             } else if (percentage >= 40) {
-                statusClass = 'on-track'; statusText = '⚠ At Risk'; statusOrder = 2;
+                statusClass = 'on-track'; statusText = 'âš  At Risk'; statusOrder = 2;
             } else {
-                statusClass = 'non-compliant'; statusText = '✗ Non-Compliant'; statusOrder = 3;
+                statusClass = 'non-compliant'; statusText = 'âœ— Non-Compliant'; statusOrder = 3;
             }
             return { name: member, attended, workingDays, percentage, statusClass, statusText, statusOrder };
         });
@@ -1595,9 +1655,9 @@ class App {
         // Render sort arrows in header
         const getArrow = (col) => {
             if (this.sortColumn === col) {
-                return this.sortDirection === 'asc' ? ' ▲' : ' ▼';
+                return this.sortDirection === 'asc' ? ' â–²' : ' â–¼';
             }
-            return ' ⇅';
+            return ' â‡…';
         };
 
         document.getElementById('summaryTable').querySelector('thead').innerHTML = `
@@ -1643,7 +1703,7 @@ class App {
             const highlightClass = isCurrentMonth ? 'holiday-current-month' : '';
             return `<div class="holiday-item ${highlightClass}">
                 <div class="holiday-info">
-                    <span class="holiday-date">📅 ${dateDisplay}</span>
+                    <span class="holiday-date">ðŸ“… ${dateDisplay}</span>
                     <span class="holiday-name">${h.name}</span>
                     ${isCurrentMonth ? '<span class="holiday-badge">This Month</span>' : ''}
                 </div>
@@ -1690,11 +1750,15 @@ class App {
         const currentUserIsAdmin = isAdmin();
         const superUser = canAssignRoles();
         this.renderTeamsAdmin();
-        let html = TEAM_MEMBERS.map((member, i) => {
+        const scope = getAdminScopeMembers();
+        this.renderMemberTeamSelect();
+        let html = scope.map((member, i) => {
             const initials = member.split(' ').map(n => n[0]).join('').substring(0, 2);
             const memberIsAdmin = ADMIN_MEMBERS.includes(member);
             const memberIsManager = MANAGERS.includes(member);
             const isSuperAdmin = member === SUPER_ADMIN;
+            const isSelf = member === getCurrentUser();
+            const canAct = canAdminMember(member);
             const m = escapeHtml(member);
             const teamId = getMemberTeamId(member);
             const teamName = getTeamName(teamId);
@@ -1705,7 +1769,7 @@ class App {
                         `<option value="${escapeHtml(id)}"${id === teamId ? ' selected' : ''}>${escapeHtml(TEAMS[id].name)}</option>`))
                     .join('');
                 const adminCtl = isSuperAdmin
-                    ? `<span class="super-admin-badge">👑 Super Admin</span>`
+                    ? `<span class="super-admin-badge">ðŸ‘‘ Super Admin</span>`
                     : `<label class="role-check"><input type="checkbox" class="chk-admin" data-member="${m}"${memberIsAdmin ? ' checked' : ''}> Admin</label>`;
                 roleControls = `
                     <select class="member-team-select" data-member="${m}" title="Team">${opts}</select>
@@ -1719,20 +1783,22 @@ class App {
 
             return `<div class="team-member-item" draggable="true" data-index="${i}" data-member="${m}">
                 <div class="team-member-info">
-                    <span class="drag-handle" title="Drag to reorder">☰</span>
+                    <span class="drag-handle" title="Drag to reorder">â˜°</span>
                     <span class="avatar" style="background:${AVATAR_COLORS[i % AVATAR_COLORS.length]}">${escapeHtml(initials)}</span>
                     <span class="team-member-name">${m}</span>
                     ${roleControls}
                 </div>
                 <div class="team-member-actions">
-                    <button class="btn-edit" data-member="${m}" title="Edit name">✏️</button>
-                    ${currentUserIsAdmin ? `<button class="btn-reset-pw" data-member="${m}" title="Reset password">🔑</button>` : ''}
-                    <button class="btn-delete" data-member="${m}" title="Remove">Remove</button>
+                    ${canAct ? `<button class="btn-edit" data-member="${m}" title="Edit name">âœï¸</button>` : ''}
+                    ${canAct && !isSelf ? `<button class="btn-reset-pw" data-member="${m}" title="Reset password">ðŸ”‘</button>` : ''}
+                    ${canAct && !isSelf && !isSuperAdmin ? `<button class="btn-delete" data-member="${m}" title="Remove">Remove</button>` : ''}
                 </div>
             </div>`;
         }).join('');
 
-        if (TEAM_MEMBERS.length === 0) {
+        if (isTeamAdmin() && !getMyTeamId()) {
+            html += '<p style="color: var(--text-secondary); padding: 20px;">You are not assigned to a team yet. Ask the Superuser to assign you.</p>';
+        } else if (scope.length === 0) {
             html = '<p style="color: var(--text-secondary); padding: 20px;">No team members added yet.</p>';
         }
 
@@ -1751,22 +1817,22 @@ class App {
                 const terminatedUsers = [];
                 for (const key in users) {
                     const user = users[key];
-                    if (user.terminated === true) {
+                    if (user.terminated === true && canAdminTeamId(user.teamId || MEMBER_TEAMS[key] || null)) {
                         terminatedUsers.push(user.name || key.replace(/___DOT___/g, '.'));
                     }
                 }
                 const section = document.getElementById('terminatedSection');
                 if (section && terminatedUsers.length > 0) {
                     section.innerHTML = `
-                        <h4 class="terminated-header">🚫 Terminated Members (${terminatedUsers.length})</h4>
+                        <h4 class="terminated-header">ðŸš« Terminated Members (${terminatedUsers.length})</h4>
                         ${terminatedUsers.map(name => `
                             <div class="team-member-item terminated-item">
                                 <div class="team-member-info">
-                                    <span class="avatar" style="background:#666">✗</span>
+                                    <span class="avatar" style="background:#666">âœ—</span>
                                     <span class="team-member-name terminated-name">${escapeHtml(name)}</span>
                                 </div>
                                 <div class="team-member-actions">
-                                    <button class="btn-restore" data-member="${escapeHtml(name)}" title="Restore member">♻️ Restore</button>
+                                    <button class="btn-restore" data-member="${escapeHtml(name)}" title="Restore member">â™»ï¸ Restore</button>
                                 </div>
                             </div>
                         `).join('')}
@@ -1782,12 +1848,12 @@ class App {
     setupDragDrop() {
         const list = document.getElementById('teamMemberList');
         let draggedItem = null;
-        let draggedIndex = -1;
+        let draggedMember = null;
 
         list.querySelectorAll('.team-member-item').forEach(item => {
             item.addEventListener('dragstart', (e) => {
                 draggedItem = item;
-                draggedIndex = parseInt(item.dataset.index);
+                draggedMember = item.dataset.member;
                 item.classList.add('dragging');
                 e.dataTransfer.effectAllowed = 'move';
             });
@@ -1814,13 +1880,8 @@ class App {
             item.addEventListener('drop', (e) => {
                 e.preventDefault();
                 item.classList.remove('drag-over');
-                const dropIndex = parseInt(item.dataset.index);
                 if (!canManageTeam()) { denyAction('Only admins can reorder the team.'); return; }
-                if (draggedIndex !== dropIndex && draggedIndex >= 0) {
-                    // Reorder array
-                    const movedMember = TEAM_MEMBERS.splice(draggedIndex, 1)[0];
-                    TEAM_MEMBERS.splice(dropIndex, 0, movedMember);
-                    saveTeamMembers(TEAM_MEMBERS);
+                if (this.reorderMembers(draggedMember, item.dataset.member)) {
                     this.renderTeamManagement();
                     this.renderTeamList();
                 }
@@ -1828,9 +1889,26 @@ class App {
         });
     }
 
+    // Move `dragged` to the position of `target` in the global roster; both must be in the actor's scope
+    reorderMembers(dragged, target) {
+        if (!canManageTeam()) { denyAction('Only admins can reorder the team.'); return false; }
+        if (!dragged || !target || dragged === target) return false;
+        if (!canAdminMember(dragged) || !canAdminMember(target)) {
+            denyAction('You can only reorder members of your own team.');
+            return false;
+        }
+        const from = TEAM_MEMBERS.indexOf(dragged);
+        const to = TEAM_MEMBERS.indexOf(target);
+        if (from < 0 || to < 0) return false;
+        TEAM_MEMBERS.splice(from, 1);
+        TEAM_MEMBERS.splice(to, 0, dragged);
+        saveTeamMembers(TEAM_MEMBERS);
+        return true;
+    }
+
     resetTeamToDefault() {
-        if (!isAdmin()) {
-            alert('⚠️ Only admins can reset the team list.');
+        if (!isSuperUser()) {
+            alert('âš ï¸ Only the Superuser can reset the team list.');
             return;
         }
         if (!confirm('Reset team list to the default members?\n\nThis will replace the current list. Attendance data is preserved.')) return;
@@ -1850,13 +1928,13 @@ class App {
         if (!canAssignRoles()) { denyAction('Only the Superuser can assign roles.'); return false; }
         if (!member || !TEAM_MEMBERS.includes(member)) return false;
         if (member === SUPER_ADMIN) {
-            if (!makeAdmin) alert('⚠️ Cannot remove the super admin.');
+            if (!makeAdmin) alert('âš ï¸ Cannot remove the super admin.');
             return false;
         }
         const has = ADMIN_MEMBERS.includes(member);
         if (makeAdmin === has) return true;
         const msg = makeAdmin
-            ? `Make "${member}" an admin?\n\nAdmins can edit everyone's attendance and manage the team.`
+            ? `Make "${member}" an admin?\n\nAdmins can edit attendance and manage members of their own team only.`
             : `Remove admin rights from "${member}"?`;
         if (!confirm(msg)) { this.renderTeamManagement(); return false; }
         ADMIN_MEMBERS = makeAdmin ? [...ADMIN_MEMBERS, member] : ADMIN_MEMBERS.filter(m => m !== member);
@@ -1889,9 +1967,9 @@ class App {
         if (typeof database === 'undefined') return false;
         name = (name || '').trim();
         if (!name) return false;
-        if (name.length > 60) { alert('⚠️ Team name must be 60 characters or fewer.'); return false; }
+        if (name.length > 60) { alert('âš ï¸ Team name must be 60 characters or fewer.'); return false; }
         if (Object.values(TEAMS).some(t => t && t.name && t.name.toLowerCase() === name.toLowerCase())) {
-            alert('⚠️ A team with this name already exists.');
+            alert('âš ï¸ A team with this name already exists.');
             return false;
         }
         const id = database.ref('teams').push().key;
@@ -1908,9 +1986,9 @@ class App {
         const input = prompt(`Rename team "${team.name}":`, team.name);
         const name = (input || '').trim();
         if (!name || name === team.name) return false;
-        if (name.length > 60) { alert('⚠️ Team name must be 60 characters or fewer.'); return false; }
+        if (name.length > 60) { alert('âš ï¸ Team name must be 60 characters or fewer.'); return false; }
         if (Object.keys(TEAMS).some(id => id !== teamId && TEAMS[id].name && TEAMS[id].name.toLowerCase() === name.toLowerCase())) {
-            alert('⚠️ A team with this name already exists.');
+            alert('âš ï¸ A team with this name already exists.');
             return false;
         }
         database.ref('teams/' + teamId + '/name').set(name);
@@ -1962,7 +2040,7 @@ class App {
                 <span class="team-admin-name">${escapeHtml(TEAMS[id].name)}</span>
                 <span class="team-tag">${count} member${count === 1 ? '' : 's'}</span>
                 <span class="team-member-actions">
-                    <button class="btn-edit btn-team-rename" data-team="${escapeHtml(id)}" title="Rename team">✏️</button>
+                    <button class="btn-edit btn-team-rename" data-team="${escapeHtml(id)}" title="Rename team">âœï¸</button>
                     <button class="btn-delete btn-team-delete" data-team="${escapeHtml(id)}" title="Delete team">Delete</button>
                 </span>
             </div>`;
@@ -1980,7 +2058,7 @@ class App {
     updateThemeButton() {
         const btn = document.getElementById('btnThemeToggle');
         const isLight = document.body.classList.contains('light-theme');
-        btn.textContent = isLight ? '🌙 Dark' : '☀️ Light';
+        btn.textContent = isLight ? 'ðŸŒ™ Dark' : 'â˜€ï¸ Light';
     }
 
     loadTheme() {
@@ -1991,15 +2069,43 @@ class App {
         this.updateThemeButton();
     }
 
-    async addMember(name) {
+    // Superuser-only team picker for the add-member form
+    renderMemberTeamSelect() {
+        const sel = document.getElementById('memberTeam');
+        if (!sel) return;
+        if (!isSuperUser()) { sel.style.display = 'none'; sel.innerHTML = ''; return; }
+        const prev = sel.value;
+        sel.innerHTML = ['<option value="">Unassigned</option>']
+            .concat(Object.keys(TEAMS).filter(id => TEAMS[id] && TEAMS[id].name).map(id =>
+                `<option value="${escapeHtml(id)}">${escapeHtml(TEAMS[id].name)}</option>`)).join('');
+        if (prev && TEAMS[prev]) sel.value = prev;
+        sel.style.display = '';
+    }
+
+    // Admin: the member is always created in the Admin's own team (teamId argument is ignored).
+    // Superuser: may pass a teamId; omitted means Unassigned.
+    async addMember(name, teamId) {
         if (!isAdmin()) {
-            alert('⚠️ Only admins can add team members.');
+            alert('âš ï¸ Only admins can add team members.');
             return;
+        }
+        if (isTeamAdmin()) {
+            teamId = getMyTeamId();
+            if (!teamId) {
+                alert('âš ï¸ Ask the Superuser to assign you to a team first.');
+                return;
+            }
+        } else {
+            teamId = (teamId && TEAMS[teamId]) ? teamId : null;
         }
         if (!name || name.trim() === '') return;
         name = name.trim();
         if (TEAM_MEMBERS.includes(name)) {
-            alert('⚠️ This member already exists!');
+            alert('âš ï¸ This member already exists!');
+            return;
+        }
+        if (name === SUPER_ADMIN) {
+            alert('âš ï¸ This member already exists!');
             return;
         }
 
@@ -2009,6 +2115,12 @@ class App {
                 const sanitizedName = name.replace(/\./g, '___DOT___');
                 const snapshot = await database.ref('users/' + sanitizedName).once('value');
                 const userData = snapshot.val();
+                // A team Admin may not claim a person who already belongs to another team
+                const existingTeam = (userData && userData.teamId) || getMemberTeamId(name);
+                if (isTeamAdmin() && existingTeam && existingTeam !== teamId) {
+                    alert('âš ï¸ This person belongs to another team. Ask the Superuser to move them.');
+                    return;
+                }
                 if (userData && userData.terminated === true) {
                     if (confirm(`"${name}" is a terminated member. Do you want to restore them instead?`)) {
                         await this.restoreMember(name);
@@ -2017,12 +2129,23 @@ class App {
                 }
             }
         } catch (e) {
-            // Ignore Firebase errors — just add locally
+            // Ignore Firebase errors â€” just add locally
         }
 
-        // Add to team members — they can register themselves later
+        // Add to team members â€” they can register themselves later
         TEAM_MEMBERS.push(name);
         saveTeamMembers(TEAM_MEMBERS);
+        if (teamId) {
+            // Record the team so the member is visible to (only) that team's Admins/Managers
+            const key = nameKey(name);
+            MEMBER_TEAMS[key] = teamId;
+            if (typeof database !== 'undefined') {
+                database.ref().update({
+                    ['users/' + key + '/teamId']: teamId,
+                    ['memberTeams/' + key]: teamId
+                });
+            }
+        }
         this.selectedMember = name;
         this.renderTeamList();
         this.renderTeamManagement();
@@ -2031,14 +2154,18 @@ class App {
 
     editMember(oldName) {
         if (!isAdmin()) {
-            alert('⚠️ Only admins can edit team member names.');
+            alert('âš ï¸ Only admins can edit team member names.');
+            return;
+        }
+        if (!canAdminMember(oldName)) {
+            alert('âš ï¸ You can only edit members of your own team.');
             return;
         }
         const newName = prompt(`Edit name for "${oldName}":`, oldName);
         if (!newName || newName.trim() === '' || newName.trim() === oldName) return;
         const trimmed = newName.trim();
         if (TEAM_MEMBERS.includes(trimmed)) {
-            alert('⚠️ A member with this name already exists!');
+            alert('âš ï¸ A member with this name already exists!');
             return;
         }
         const index = TEAM_MEMBERS.indexOf(oldName);
@@ -2061,11 +2188,19 @@ class App {
 
     removeMember(name) {
         if (!isAdmin()) {
-            alert('⚠️ Only admins can remove team members.');
+            alert('âš ï¸ Only admins can remove team members.');
             return;
         }
         if (name === SUPER_ADMIN) {
-            alert('⚠️ Cannot remove the super admin.');
+            alert('âš ï¸ Cannot remove the super admin.');
+            return;
+        }
+        if (!canAdminMember(name)) {
+            alert('âš ï¸ You can only remove members of your own team.');
+            return;
+        }
+        if (name === getCurrentUser()) {
+            alert('âš ï¸ You cannot remove yourself.');
             return;
         }
         if (!confirm(`Are you sure you want to remove "${name}" from the team?\n\nThey will be marked as terminated but can be restored later.`)) return;
@@ -2097,6 +2232,11 @@ class App {
 
     async restoreMember(name) {
         if (!canManageTeam()) { denyAction('Only admins can restore team members.'); return; }
+        // Terminated members keep their team record; no team => Superuser only
+        if (!canAdminTeamId(MEMBER_TEAMS[nameKey(name)] || null)) {
+            denyAction('You can only restore members of your own team.');
+            return;
+        }
 
         // Remove terminated flag and set mustResetPassword (Fix 1)
         const sanitizedName = name.replace(/\./g, '___DOT___');
@@ -2130,7 +2270,8 @@ class App {
 
     syncExport() {
         if (!canUseReports()) { denyAction('Only admins can export data.'); return; }
-        const json = this.data.exportJSON();
+        // Team Admins export only their own scope; Superuser exports everything
+        const json = this.data.exportJSON(isSuperUser() ? undefined : getAdminScopeMembers());
         const blob = new Blob([json], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -2142,11 +2283,11 @@ class App {
 
         const status = document.getElementById('syncStatus');
         status.className = 'sync-status success';
-        status.textContent = '✅ File downloaded! Upload it to your Teams channel → Files tab to share with the team.';
+        status.textContent = 'âœ… File downloaded! Upload it to your Teams channel â†’ Files tab to share with the team.';
     }
 
     syncImport() {
-        if (!canUseReports()) { denyAction('Only admins can import data.'); return; }
+        if (!canImportData()) { denyAction('Only the Superuser can import data.'); return; }
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = '.json';
@@ -2158,12 +2299,12 @@ class App {
                     const status = document.getElementById('syncStatus');
                     if (this.data.importJSON(event.target.result)) {
                         status.className = 'sync-status success';
-                        status.textContent = '✅ Data synced successfully! All attendance records are now up to date.';
+                        status.textContent = 'âœ… Data synced successfully! All attendance records are now up to date.';
                         this.renderCalendar();
                         this.renderTeamList();
                     } else {
                         status.className = 'sync-status error';
-                        status.textContent = '❌ Invalid file. Please use a valid attendance JSON file from your team.';
+                        status.textContent = 'âŒ Invalid file. Please use a valid attendance JSON file from your team.';
                     }
                 };
                 reader.readAsText(file);
@@ -2175,6 +2316,7 @@ class App {
     // --- Monthly Dashboard Report ---
     generateDashboardReport() {
         if (!canUseReports()) return '';
+        const scope = getAdminScopeMembers();
         const monthNames = ["January", "February", "March", "April", "May", "June",
             "July", "August", "September", "October", "November", "December"];
 
@@ -2186,7 +2328,7 @@ class App {
         let totalAttended = 0;
         const memberData = [];
 
-        TEAM_MEMBERS.forEach(member => {
+        scope.forEach(member => {
             const attended = this.data.getAttendanceCount(member, this.currentYear, this.currentMonth);
             const percentage = this.data.getAttendancePercentage(member, this.currentYear, this.currentMonth);
             if (percentage >= REQUIRED_PERCENTAGE) compliantCount++;
@@ -2212,25 +2354,25 @@ class App {
             });
         }
 
-        const avgAttendance = workingDays > 0 ? Math.round((totalAttended / (TEAM_MEMBERS.length * workingDays)) * 100) : 0;
+        const avgAttendance = (workingDays > 0 && scope.length > 0) ? Math.round((totalAttended / (scope.length * workingDays)) * 100) : 0;
 
         const getArrow = (col) => {
             if (this.sortColumn === col) {
-                return this.sortDirection === 'asc' ? ' ▲' : ' ▼';
+                return this.sortDirection === 'asc' ? ' â–²' : ' â–¼';
             }
-            return ' ⇅';
+            return ' â‡…';
         };
 
         let html = `
             <div class="report-header">
-                <h1>📊 Monthly Attendance Report</h1>
+                <h1>ðŸ“Š Monthly Attendance Report</h1>
                 <div class="report-subtitle">${monthNames[this.currentMonth]} ${this.currentYear}</div>
                 <div class="report-date">Generated on ${reportDate}</div>
             </div>
 
             <div class="report-kpis">
                 <div class="report-kpi">
-                    <span class="kpi-value blue">${TEAM_MEMBERS.length}</span>
+                    <span class="kpi-value blue">${scope.length}</span>
                     <span class="kpi-label">Team Members</span>
                 </div>
                 <div class="report-kpi">
@@ -2239,7 +2381,7 @@ class App {
                 </div>
                 <div class="report-kpi">
                     <span class="kpi-value green">${compliantCount}</span>
-                    <span class="kpi-label">Compliant (≥60%)</span>
+                    <span class="kpi-label">Compliant (â‰¥60%)</span>
                 </div>
                 <div class="report-kpi">
                     <span class="kpi-value ${avgAttendance >= 60 ? 'green' : 'orange'}">${avgAttendance}%</span>
@@ -2265,13 +2407,13 @@ class App {
             let badgeClass, badgeText;
             if (m.percentage >= REQUIRED_PERCENTAGE) {
                 badgeClass = 'badge-green';
-                badgeText = '✓ Compliant';
+                badgeText = 'âœ“ Compliant';
             } else if (m.percentage >= 40) {
                 badgeClass = 'badge-orange';
-                badgeText = '⚠ At Risk';
+                badgeText = 'âš  At Risk';
             } else {
                 badgeClass = 'badge-red';
-                badgeText = '✗ Non-Compliant';
+                badgeText = 'âœ— Non-Compliant';
             }
 
             const barColor = m.percentage >= REQUIRED_PERCENTAGE ? 'green' : (m.percentage >= 40 ? 'orange' : 'red');
@@ -2296,7 +2438,7 @@ class App {
 
             <div class="report-footer">
                 <span>Required: ${REQUIRED_PERCENTAGE}% (${Math.ceil(workingDays * REQUIRED_PERCENTAGE / 100)} days minimum)</span>
-                <span>Compliance: ${compliantCount}/${TEAM_MEMBERS.length} members</span>
+                <span>Compliance: ${compliantCount}/${scope.length} members</span>
                 <span>Report by: Attendance Tracker</span>
             </div>`;
 
@@ -2305,6 +2447,7 @@ class App {
 
     generateEmailHTML() {
         if (!canUseReports()) return '';
+        const scope = getAdminScopeMembers();
         const monthNames = ["January", "February", "March", "April", "May", "June",
             "July", "August", "September", "October", "November", "December"];
 
@@ -2316,7 +2459,7 @@ class App {
         let totalAttended = 0;
         const memberData = [];
 
-        TEAM_MEMBERS.forEach(member => {
+        scope.forEach(member => {
             const attended = this.data.getAttendanceCount(member, this.currentYear, this.currentMonth);
             const percentage = this.data.getAttendancePercentage(member, this.currentYear, this.currentMonth);
             if (percentage >= REQUIRED_PERCENTAGE) compliantCount++;
@@ -2324,7 +2467,7 @@ class App {
             memberData.push({ name: member, attended, percentage });
         });
 
-        const avgAttendance = workingDays > 0 ? Math.round((totalAttended / (TEAM_MEMBERS.length * workingDays)) * 100) : 0;
+        const avgAttendance = (workingDays > 0 && scope.length > 0) ? Math.round((totalAttended / (scope.length * workingDays)) * 100) : 0;
 
         let html = `<!DOCTYPE html>
 <html>
@@ -2340,7 +2483,7 @@ class App {
 <!-- Header -->
 <tr>
 <td style="background:#0052CC;padding:24px 32px;text-align:center;">
-<h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:600;">📊 Monthly Attendance Report</h1>
+<h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:600;">ðŸ“Š Monthly Attendance Report</h1>
 <p style="margin:4px 0 0;color:#a8c8ff;font-size:14px;">${monthNames[this.currentMonth]} ${this.currentYear}</p>
 <p style="margin:4px 0 0;color:#7fb3ff;font-size:12px;">Generated on ${reportDate}</p>
 </td>
@@ -2352,7 +2495,7 @@ class App {
 <table width="100%" cellpadding="0" cellspacing="0">
 <tr>
 <td width="25%" style="text-align:center;padding:12px;background:#f8f9fa;border-radius:8px;">
-<div style="font-size:28px;font-weight:700;color:#0052CC;">${TEAM_MEMBERS.length}</div>
+<div style="font-size:28px;font-weight:700;color:#0052CC;">${scope.length}</div>
 <div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:0.5px;margin-top:4px;">Team Members</div>
 </td>
 <td width="4%"></td>
@@ -2363,7 +2506,7 @@ class App {
 <td width="4%"></td>
 <td width="25%" style="text-align:center;padding:12px;background:#f8f9fa;border-radius:8px;">
 <div style="font-size:28px;font-weight:700;color:#2ea043;">${compliantCount}</div>
-<div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:0.5px;margin-top:4px;">Compliant (≥60%)</div>
+<div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:0.5px;margin-top:4px;">Compliant (â‰¥60%)</div>
 </td>
 <td width="4%"></td>
 <td width="25%" style="text-align:center;padding:12px;background:#f8f9fa;border-radius:8px;">
@@ -2393,11 +2536,11 @@ class App {
         memberData.forEach((m, i) => {
             let badgeBg, badgeColor, badgeText;
             if (m.percentage >= REQUIRED_PERCENTAGE) {
-                badgeBg = '#d4edda'; badgeColor = '#155724'; badgeText = '✓ Compliant';
+                badgeBg = '#d4edda'; badgeColor = '#155724'; badgeText = 'âœ“ Compliant';
             } else if (m.percentage >= 40) {
-                badgeBg = '#fff3cd'; badgeColor = '#856404'; badgeText = '⚠ At Risk';
+                badgeBg = '#fff3cd'; badgeColor = '#856404'; badgeText = 'âš  At Risk';
             } else {
-                badgeBg = '#f8d7da'; badgeColor = '#721c24'; badgeText = '✗ Non-Compliant';
+                badgeBg = '#f8d7da'; badgeColor = '#721c24'; badgeText = 'âœ— Non-Compliant';
             }
 
             const barColor = m.percentage >= REQUIRED_PERCENTAGE ? '#2ea043' : (m.percentage >= 40 ? '#d29922' : '#da3633');
@@ -2432,7 +2575,7 @@ ${m.percentage}%
 <table width="100%" cellpadding="0" cellspacing="0">
 <tr>
 <td style="font-size:11px;color:#888;">Required: ${REQUIRED_PERCENTAGE}% (${Math.ceil(workingDays * REQUIRED_PERCENTAGE / 100)} days minimum)</td>
-<td style="font-size:11px;color:#888;text-align:center;">Compliance: ${compliantCount}/${TEAM_MEMBERS.length} members</td>
+<td style="font-size:11px;color:#888;text-align:center;">Compliance: ${compliantCount}/${scope.length} members</td>
 <td style="font-size:11px;color:#888;text-align:right;">Report by: Attendance Tracker</td>
 </tr>
 </table>
@@ -2467,7 +2610,7 @@ ${m.percentage}%
             if (!localStorage.getItem(reminderKey)) {
                 setTimeout(() => {
                     if (!getCurrentUser()) return;
-                    if (confirm('📧 Reminder: Today is a report submission day (20th or last day of month).\n\nWould you like to generate the attendance report now?')) {
+                    if (confirm('ðŸ“§ Reminder: Today is a report submission day (20th or last day of month).\n\nWould you like to generate the attendance report now?')) {
                         this.showEmailModal();
                     }
                     localStorage.setItem(reminderKey, 'shown');
@@ -2488,14 +2631,14 @@ ${m.percentage}%
         document.getElementById('toggleLoginPw').addEventListener('click', () => {
             const input = document.getElementById('loginPassword');
             const toggle = document.getElementById('toggleLoginPw');
-            if (input.type === 'password') { input.type = 'text'; toggle.textContent = '🙈'; }
-            else { input.type = 'password'; toggle.textContent = '👁️'; }
+            if (input.type === 'password') { input.type = 'text'; toggle.textContent = 'ðŸ™ˆ'; }
+            else { input.type = 'password'; toggle.textContent = 'ðŸ‘ï¸'; }
         });
         document.getElementById('toggleRegPw').addEventListener('click', () => {
             const input = document.getElementById('registerPassword');
             const toggle = document.getElementById('toggleRegPw');
-            if (input.type === 'password') { input.type = 'text'; toggle.textContent = '🙈'; }
-            else { input.type = 'password'; toggle.textContent = '👁️'; }
+            if (input.type === 'password') { input.type = 'text'; toggle.textContent = 'ðŸ™ˆ'; }
+            else { input.type = 'password'; toggle.textContent = 'ðŸ‘ï¸'; }
         });
 
         document.getElementById('btnRegister').addEventListener('click', () => this.handleRegister());
@@ -2508,7 +2651,7 @@ ${m.percentage}%
             document.getElementById('loginForm').style.display = 'none';
             document.getElementById('registerForm').style.display = 'block';
             document.getElementById('forgotForm').style.display = 'none';
-            document.getElementById('authModalTitle').textContent = '📝 Register';
+            document.getElementById('authModalTitle').textContent = 'ðŸ“ Register';
             this.loadTeamOptions();
         });
 
@@ -2517,7 +2660,7 @@ ${m.percentage}%
             document.getElementById('loginForm').style.display = 'block';
             document.getElementById('registerForm').style.display = 'none';
             document.getElementById('forgotForm').style.display = 'none';
-            document.getElementById('authModalTitle').textContent = '🔐 Login';
+            document.getElementById('authModalTitle').textContent = 'ðŸ” Login';
         });
 
         document.getElementById('showForgotPassword').addEventListener('click', (e) => {
@@ -2525,14 +2668,14 @@ ${m.percentage}%
             document.getElementById('loginForm').style.display = 'none';
             document.getElementById('registerForm').style.display = 'none';
             document.getElementById('forgotForm').style.display = 'block';
-            document.getElementById('authModalTitle').textContent = '🔑 Forgot Password';
+            document.getElementById('authModalTitle').textContent = 'ðŸ”‘ Forgot Password';
         });
 
         document.getElementById('btnBackToLogin').addEventListener('click', () => {
             document.getElementById('loginForm').style.display = 'block';
             document.getElementById('registerForm').style.display = 'none';
             document.getElementById('forgotForm').style.display = 'none';
-            document.getElementById('authModalTitle').textContent = '🔐 Login';
+            document.getElementById('authModalTitle').textContent = 'ðŸ” Login';
         });
 
         // Logout in another tab (or cleared storage) locks this tab too
@@ -2679,9 +2822,9 @@ ${m.percentage}%
         // Theme toggle
         document.getElementById('btnThemeToggle').addEventListener('click', () => this.toggleTheme());
 
-        // Visibility toggle (admin only)
+        // Visibility toggle (Superuser only: it is a global setting)
         document.getElementById('toggleVisibility').addEventListener('change', (e) => {
-            if (!isAdmin()) { e.target.checked = !e.target.checked; denyAction('Only admins can change this setting.'); return; }
+            if (!isSuperUser()) { e.target.checked = !e.target.checked; denyAction('Only the Superuser can change this setting.'); return; }
             if (typeof database !== 'undefined') {
                 database.ref('settings/everyoneSeesAll').set(e.target.checked);
             }
@@ -2700,7 +2843,7 @@ ${m.percentage}%
             const input = document.getElementById('memberName');
             const name = input.value;
             if (name && name.trim()) {
-                await this.addMember(name);
+                await this.addMember(name, (document.getElementById('memberTeam') || {}).value);
                 input.value = '';
             }
         });
@@ -2710,7 +2853,7 @@ ${m.percentage}%
                 const input = document.getElementById('memberName');
                 const name = input.value;
                 if (name && name.trim()) {
-                    await this.addMember(name);
+                    await this.addMember(name, (document.getElementById('memberTeam') || {}).value);
                     input.value = '';
                 }
             }
@@ -2815,11 +2958,11 @@ ${m.percentage}%
             const blob = new Blob([emailHtml], { type: 'text/html' });
             const clipboardItem = new ClipboardItem({ 'text/html': blob });
             navigator.clipboard.write([clipboardItem]).then(() => {
-                alert('✅ Dashboard report copied! Paste directly into Outlook or Teams — it will look like a visual dashboard.');
+                alert('âœ… Dashboard report copied! Paste directly into Outlook or Teams â€” it will look like a visual dashboard.');
             }).catch(() => {
                 // Fallback: copy as plain HTML source
                 navigator.clipboard.writeText(emailHtml).then(() => {
-                    alert('✅ HTML report copied to clipboard! Paste into an email editor that supports HTML.');
+                    alert('âœ… HTML report copied to clipboard! Paste into an email editor that supports HTML.');
                 });
             });
         });

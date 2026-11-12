@@ -66,7 +66,7 @@ Teams, Manager and Admin flags are written only by the Superuser's UI. Existing 
 
 ### Recommended security rules (NOT deployed, NOT active)
 
-> ⚠️ **Client-side checks alone are not secure.** The current rules are open, there is no Firebase Authentication, and `appData` is one blob that every client downloads. Anyone with the Firebase config can read or write any path directly, so the Manager/Admin/team restrictions in the UI only stop honest use. Nothing below has been applied to this project.
+> ⚠️ **Firebase rules are NOT deployed. Client-side checks alone are not secure.** The current rules are open, there is no Firebase Authentication, and `appData` is one blob that every client downloads. Anyone with the Firebase config can read or write any path directly, so the Manager/Admin/team restrictions in the UI only stop honest use. Nothing below has been applied to this project.
 
 Real enforcement needs (1) Firebase Authentication, with custom claims set by a trusted backend (`superuser: true`, `admin: true`, `manager: true`, `teamId: "<id>"`), and (2) splitting `appData` so attendance is stored per member (for example `attendance/{memberKey}` with a `teamId` field), because rules cannot filter inside a single blob. A starting point once those exist:
 
@@ -99,17 +99,19 @@ Real enforcement needs (1) Firebase Authentication, with custom claims set by a 
     },
     "attendanceByMember": {
       "$memberKey": {
-        ".read": "auth.token.admin === true || auth.token.superuser === true || auth.token.name === $memberKey || (auth.token.manager === true && data.child('teamId').val() === auth.token.teamId)",
-        ".write": "auth.token.admin === true || auth.token.superuser === true || auth.token.name === $memberKey"
+        ".read": "auth.token.superuser === true || auth.token.name === $memberKey || ((auth.token.manager === true || auth.token.admin === true) && data.child('teamId').val() === auth.token.teamId)",
+        ".write": "auth.token.superuser === true || auth.token.name === $memberKey || (auth.token.admin === true && data.child('teamId').val() === auth.token.teamId)"
       }
     },
     "holidays": {
       ".read": "auth != null",
-      ".write": "auth.token.admin === true || auth.token.superuser === true"
+      ".write": "auth.token.superuser === true"
     }
   }
 }
 ```
+
+Admin team scope: the snippet above limits Admin reads and writes to the Admin's own `teamId` (like the Manager clause) and keeps holidays Superuser-only. The current single `appData` blob keyed by member name cannot express that, so the app's Admin team scoping is **client-side only** until attendance is restructured per team (for example `attendanceByTeam/{teamId}/{member}`) and Firebase Auth is added. Suggested follow-up.
 
 Notes: `attendanceByMember` and `auth.token.*` claims do not exist in the app today; this snippet is a design target, not a drop-in replacement. If `teams` is later made non-public, the pre-login team picker will be empty. Then users should choose their team after first login (the Superuser can always assign it). Note too that a Superuser-assigned Manager flag on a name that has not registered yet will apply to whoever registers that name first. Register those users before flagging them.
 
@@ -130,7 +132,7 @@ The app shows a connection indicator next to "Attendance Tracker":
 3. Share the app URL with team members
 4. Each member clicks **"Register here"** → enters full name + creates password
 5. Username is auto-generated (shown after login)
-6. Admin enables **"Everyone sees everyone's data"** toggle in Manage Team if needed
+6. Super Admin enables **"Everyone sees everyone's data"** toggle in Manage Team if needed (team-scoped; Admins cannot change it)
 
 ---
 
@@ -160,12 +162,14 @@ The app shows a connection indicator next to "Attendance Tracker":
 
 ## Admin Responsibilities
 
-- Add new team members (Manage Team → type name → Add)
+An Admin acts on **their own team only**. An Admin with no team sees only themselves until the Super Admin assigns one.
+
+- Add new team members to your team (Manage Team → type name → Add; always created in your own team)
 - Remove terminated members (they can be restored later)
 - Reset forgotten passwords (🔑 icon → resets to `Temp@123`)
-- Manage holidays (add/remove from Holidays view)
-- Toggle data visibility for team
-- Generate monthly reports
+- Holidays: Super Admin only by default (`ADMIN_CAN_EDIT_HOLIDAYS` in `app.js`)
+- Data visibility toggle: Super Admin only
+- Generate monthly reports for your team
 - Promote/demote other admins (super admin only)
 
 ---
@@ -178,7 +182,7 @@ The app shows a connection indicator next to "Attendance Tracker":
 | "Username not found" | User hasn't registered yet. Click "Register here". |
 | "Account terminated" | Admin needs to restore the user in Manage Team. |
 | Data not syncing | Check 🟢/🔴 indicator next to "Attendance Tracker" |
-| Can't see team members | Admin needs to enable visibility toggle |
+| Can't see team members | Super Admin needs to enable visibility toggle |
 | Password forgotten | Admin resets to `Temp@123` |
 
 ---
