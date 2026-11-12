@@ -124,6 +124,13 @@ function getTeamName(teamId) {
     return (teamId && TEAMS && TEAMS[teamId] && TEAMS[teamId].name) || null;
 }
 
+// Team label for the signed-in user: own team, 'All Teams' for admins, else 'No team'
+function getMyTeamLabel() {
+    if (!getCurrentUser()) return '';
+    if (isAdmin()) return 'All Teams';
+    return getTeamName(getMyTeamId()) || 'No team';
+}
+
 function everyoneSeesAllEnabled() {
     const toggle = document.getElementById('toggleVisibility');
     return !!(toggle && toggle.checked);
@@ -718,7 +725,7 @@ class App {
         // Empty every container that renders attendance / user data
         ['teamList', 'calendarGrid', 'attendanceStats', 'viewingInfo', 'summaryBody',
          'holidayList', 'teamMemberList', 'teamsAdminList', 'reportDashboard', 'currentUserDisplay',
-         'currentMonthYear', 'summaryMonthYear', 'syncStatus'].forEach(id => {
+         'currentMonthYear', 'summaryMonthYear', 'syncStatus', 'teamHeadingLabel'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.innerHTML = '';
         });
@@ -1110,22 +1117,26 @@ class App {
                     const uname = snapshot.val() || user;
                     display.innerHTML = `
                         <span class="user-display-name">${uname}${badge}</span>
+                        <span class="user-display-team" id="currentUserTeam"></span>
                         <span class="user-display-sep">|</span>
                         <span class="user-display-btn" id="btnChangePassword" title="Change password">🔑 Password</span>
                         <span class="user-display-sep">|</span>
                         <span class="user-display-btn" id="btnLogout" title="Logout">⇄ Logout</span>
                     `;
                     this.bindUserDisplayEvents(display);
+                    this.updateTeamLabels();
                 });
             } else {
                 display.innerHTML = `
                     <span class="user-display-name">${user}${badge}</span>
+                    <span class="user-display-team" id="currentUserTeam"></span>
                     <span class="user-display-sep">|</span>
                     <span class="user-display-btn" id="btnChangePassword" title="Change password">🔑 Password</span>
                     <span class="user-display-sep">|</span>
                     <span class="user-display-btn" id="btnLogout" title="Logout">⇄ Logout</span>
                 `;
                 this.bindUserDisplayEvents(display);
+                    this.updateTeamLabels();
             }
         } else {
             display.innerHTML = '';
@@ -1238,11 +1249,25 @@ class App {
             const initials = member.split(' ').map(n => n[0]).join('').substring(0, 2);
             const isActive = member === this.selectedMember ? 'active' : '';
             const isMe = member === currentUser ? '<span class="me-tag">(You)</span>' : '';
+            // Admins see many teams, so tag each member with theirs
+            const teamTag = isAdmin()
+                ? ` <span class="member-team-tag">[${escapeHtml(getTeamName(getMemberTeamId(member)) || 'No team')}]</span>`
+                : '';
             return `<li class="${isActive}" data-member="${escapeHtml(member)}">
                 <span class="avatar" style="background:${AVATAR_COLORS[i % AVATAR_COLORS.length]}">${escapeHtml(initials)}</span>
-                ${escapeHtml(member)} ${isMe}
+                ${escapeHtml(member)} ${isMe}${teamTag}
             </li>`;
         }).join('');
+        this.updateTeamLabels();
+    }
+
+    // Team name next to "Team Members" and in the header; textContent only, empty when logged out
+    updateTeamLabels() {
+        const label = getMyTeamLabel();
+        const heading = document.getElementById('teamHeadingLabel');
+        if (heading) heading.textContent = label ? ' - ' + label : '';
+        const mine = document.getElementById('currentUserTeam');
+        if (mine) mine.textContent = label ? '(' + label + ')' : '';
     }
 
     // --- Calendar ---
