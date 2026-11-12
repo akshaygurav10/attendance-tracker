@@ -56,7 +56,7 @@ Toggle note: the `everyoneSeesAll` toggle is Superuser-controlled (it is one glo
 - (a) **Manager adds a team-scoped read-only view.** (Originally Admin was to stay unchanged apart from losing role assignment; see (b).)
 - (b) **Admin is team-scoped (own team + self), not global.** Reverses the earlier decision "Admin stays global" after the user's request on 2026-11-12. Superuser stays global.
 - (c) **Existing users with no team are Unassigned.** Superuser can assign them. Unassigned users behave as Employees with no team view. Code treats missing `teamId` as `null`; no crash on any missing node.
-- (d) **Only the Superuser can change a team after registration.** Login-time selection only fills an empty team.
+- (d) **Only the Superuser can change a team after registration.** Login/register-time selection only fills an empty team for ordinary users. Admins (and the Superuser) never self-assign a team there; only the Superuser assigns an Admin's team (`canSelfAssignTeam`).
 - (e) **A Manager's view of their own data stays available** and own-data editing is unchanged.
 - (f) Manager does not get Monthly Report / Sync to Teams (not requested; avoids scope creep). Open question 2.
 - (g) Roles are stored as independent flags, not a single enum, so Admin+Manager needs no extra role.
@@ -118,8 +118,10 @@ Register: team is required once at least one team exists. Login: dropdown shown,
 9. Possible follow-up: Superuser team filter dropdown (skipped, Superuser stays global).
 10. Admins stay unable to edit Admin/Manager flags (Superuser only).
 11. Restore of a terminated member with no team is Superuser-only. Confirm.
-12. Login-time team picker still lets a team-less Admin pick a first team for themselves (existing behavior for all users, applies only when no team is set). Confirm whether Admins should instead wait for the Superuser to assign them.
+12. RESOLVED in code (review fix): the login/register team picker no longer applies to Admins, so a team-less Admin cannot self-assign a team and stays self-only until the Superuser assigns one.
+13. Peer-Admin management: an Admin can edit, remove or reset the password of another Admin in the same team (the Superuser account is always protected). Current behavior, kept; confirm whether Admins should be unable to manage fellow Admins.
 
 ## 10. Changelog
 
 - 2026-11-12: Admin changed from global to team-scoped (own team + self). Holidays, `everyoneSeesAll`, import and reset-roster are Superuser-only. Admin-added members forced into the Admin's team. Team checks enforced inside every action function. Firebase rules still not deployed.
+- 2026-11-12 (review fix): Admins can no longer self-assign a team via the login/register picker.

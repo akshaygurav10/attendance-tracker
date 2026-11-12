@@ -33,4 +33,6 @@ Firebase rules are NOT deployed, there is no Firebase Auth, and `appData` is one
 ## Open questions for the user
 
 1. Should team Admins edit global holidays? Default no (`ADMIN_CAN_EDIT_HOLIDAYS = false`).
-2. A team-less Admin can still pick a first team at login (existing behavior for all users). Keep?
+2. (Resolved in review iteration) Admins no longer pick a team at login/register; `canSelfAssignTeam` gates both. Harness row added; `node .agents/tasks/teams-roles-permission-test.js` -> ALL PASSED, `node --check app.js` and `firebase-config.js` clean. The inline login/register handlers themselves (Firebase writes) were not run.
+3. Peer-Admin management (Admin can manage another same-team Admin) is current behavior, now documented (REQUIREMENTS open question 13). Keep?
+4. Browser/Firebase manual checklist still pending before release.

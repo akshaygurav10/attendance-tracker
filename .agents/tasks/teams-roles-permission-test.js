@@ -149,6 +149,11 @@ run('TEAMS={};MEMBER_TEAMS={};MANAGERS=[]');
 eq('Empty state: manager flag false, team null', [as('Mgr A', 'isManager()'), as('Mgr A', 'getMyTeamId()')], [false, null]);
 eq('Empty state: team admin sees only self, no throw', [as('Adm A', 'getVisibleMembers()'), as('Adm A', 'getAdminScopeMembers()')], [['Adm A'], ['Adm A']]);
 eq('Logged out: nothing visible', (delete store['attendance_current_user'], run('getVisibleMembers()')), []);
+// Login/register team self-assignment: Admins and Superuser never pick their own team
+run("MEMBER_TEAMS={}");
+eq('canSelfAssignTeam: Employee yes, listed Admin no, flagged-in-db Admin no, Super no, empty no',
+  [run("canSelfAssignTeam('Emp A', {})"), run("canSelfAssignTeam('Adm U', {})"), run("canSelfAssignTeam('New Person', {isAdmin:true})"), run("canSelfAssignTeam(SUPER_ADMIN, {})"), run("canSelfAssignTeam('', null)")],
+  [true, false, false, false, false]);
 console.log(fail ? fail + ' FAILED' : 'ALL PASSED');
 process.exit(fail ? 1 : 0);
 
