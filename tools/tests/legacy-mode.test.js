@@ -10,7 +10,7 @@ const vm = require('vm');
 
 const ROOT = path.join(__dirname, '..', '..');
 const read = f => fs.readFileSync(path.join(ROOT, f), 'utf8');
-const SCRIPTS = ['auth-helpers.js', 'data-paths.js', 'secure-flows.js', 'secure-mode.js', 'app.js'];
+const SCRIPTS = ['auth-helpers.js', 'data-paths.js', 'secure-flows.js', 'permissions.js', 'secure-mode.js', 'app.js'];
 
 function makeContext() {
     const calls = { auth: 0, sets: [], on: [], domReady: 0 };
@@ -80,8 +80,9 @@ test('legacy: current user and roles still come from localStorage and the legacy
     vm.runInContext('ADMIN_MEMBERS = ["Some One"]; MANAGERS = ["Some One"]', env.ctx);
     assert.strictEqual(vm.runInContext('isAdmin()', env.ctx), true);
     assert.strictEqual(vm.runInContext('isManager()', env.ctx), true);
-    env.storage.attendance_current_user = 'Akshay Gurav';
-    assert.strictEqual(vm.runInContext('isSuperUser()', env.ctx), true);
+    // No name is the Superuser until a users/* record with isSuperAdmin === true is loaded
+    env.storage.attendance_current_user = 'Some One';
+    assert.strictEqual(vm.runInContext('isSuperUser()', env.ctx), false);
 });
 
 test('old cached firebase-config.js without the flag runs legacy', () => {
@@ -105,7 +106,7 @@ test('typos and non-strings are legacy; only "secure" creates Auth and skips con
     assert.strictEqual(env.calls.auth, 1);
     assert.ok(!env.calls.sets.includes('connectionTest'));
     // Secure: current user is not taken from localStorage
-    env.storage.attendance_current_user = 'Akshay Gurav';
+    env.storage.attendance_current_user = 'Some One';
     assert.strictEqual(vm.runInContext('getCurrentUser()', env.ctx), null);
     assert.strictEqual(vm.runInContext('isSuperUser()', env.ctx), false);
 });
@@ -118,16 +119,18 @@ test('secure mode: the legacy blob writers are no-ops', () => {
     assert.strictEqual(env.storage.attendance_team_members, undefined);
 });
 
-test('secure mode: lockApp cleanup drops profile state and signs out', () => {
-    const env = load(read('firebase-config.js').replace('const SECURITY_MODE = "legacy";', 'const SECURITY_MODE = "secure";'));
-    vm.runInContext(`
-        SecureMode.state.profile = { name: 'X', memberKey: 'X', isAdmin: true };
-        SecureMode.state.uid = 'u1';
-        SecureMode.state.store = { a: 1 };
-    `, env.ctx);
+test('secure mode: lockApp cleanup drops profile state and signs out', async () => {
+    const { makeEnv } = require('./secure-harness.js');
+    const env = makeEnv({
+        users: [{ uid: 'u1', username: 'xx', profile: { name: 'X', memberKey: 'X', isAdmin: true, teamId: 'tA' } }],
+        tree: { teamData: { tA: { members: { X: { name: 'X', order: 1, uid: 'u1' } } } }, teamNames: { tA: 'Team A' } }
+    });
+    await env.login('xx');
     assert.strictEqual(vm.runInContext('getCurrentUser()', env.ctx), 'X');
+    assert.strictEqual(vm.runInContext('isAdmin()', env.ctx), true);
+    assert.strictEqual(vm.runInContext('SecureMode.snapshot().uid', env.ctx), 'u1');
     vm.runInContext('SecureMode.beforeLock()', env.ctx);
     assert.strictEqual(vm.runInContext('getCurrentUser()', env.ctx), null);
     assert.strictEqual(vm.runInContext('isAdmin()', env.ctx), false);
-    assert.deepStrictEqual(vm.runInContext('JSON.stringify(SecureMode.state.store)', env.ctx), '{}');
+    assert.deepStrictEqual(vm.runInContext('JSON.stringify(SecureMode.snapshot().store)', env.ctx), '{}');
 });
