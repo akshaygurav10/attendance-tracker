@@ -118,7 +118,6 @@ function makeCtx(db, auth, dir, extraEnv) {
         now: (() => { let i = 0; return () => new Date(Date.UTC(2026, 5, 1, 0, 0, i++)).toISOString(); })(),
         cwd: dir, env: Object.assign({ MIGRATION_STATE_SECRET: 'test-secret', MIGRATION_CSV_PASSPHRASE: 'pass phrase' }, extraEnv || {}),
         prompt: async () => 'prompted',
-        appJsPath: path.join(__dirname, '..', '..', '..', 'app.js'),
         db, auth
     };
 }

@@ -20,11 +20,22 @@ const EMAIL_DOMAIN = '@attendance.local';
 function redact(s) { return String(s).replace(/\b[0-9a-fA-F]{64}\b/g, '[redacted]'); }
 function logger(ctx) { return (...a) => ctx.out(redact(a.join(' '))); }
 
-function readSuperAdminConstant(appJsPath) {
-    const src = fs.readFileSync(appJsPath, 'utf8');
-    const m = /const SUPER_ADMIN\s*=\s*"([^"]+)"/.exec(src);
-    if (!m) throw new Error('Could not read SUPER_ADMIN from ' + appJsPath);
-    return m[1];
+// Superuser name: --superuser "<name>" and/or the single legacy users/* record
+// with isSuperAdmin === true. Nothing is read from the client code.
+function resolveSuperName(flags, legacyUsers) {
+    const flagName = typeof flags.superuser === 'string' && flags.superuser ? flags.superuser : null;
+    const recs = Object.keys(legacyUsers || {})
+        .filter(k => legacyUsers[k] && legacyUsers[k].isSuperAdmin === true)
+        .map(k => legacyUsers[k].name || k);
+    if (flagName) {
+        if (recs.length === 1 && recs[0] !== flagName) {
+            throw new Error('--superuser "' + flagName + '" does not match the legacy Superuser record "' + recs[0] + '"');
+        }
+        return flagName;
+    }
+    if (recs.length === 1) return recs[0];
+    if (recs.length === 0) throw new Error('No legacy users/* record has isSuperAdmin === true. Pass --superuser "<name>" with the Superuser\'s exact name.');
+    throw new Error('Several legacy users/* records have isSuperAdmin === true (' + recs.join(', ') + '). Pass --superuser "<name>" to choose the Superuser.');
 }
 
 async function readNodes(db, names) {
@@ -57,11 +68,8 @@ function bucketOfKey(state, key) {
 // ---- shared preparation ----
 async function prepare(ctx, flags) {
     const log = logger(ctx);
-    const superName = readSuperAdminConstant(ctx.appJsPath);
-    if (flags.superuser && flags.superuser !== superName) {
-        throw new Error('--superuser "' + flags.superuser + '" does not match SUPER_ADMIN in app.js ("' + superName + '")');
-    }
     const legacy = await readNodes(ctx.db, LEGACY_NODES);
+    const superName = resolveSuperName(flags, legacy.users);
     const current = await readNodes(ctx.db, NEW_NODES);
     const authUsers = await listAuthUsers(ctx.auth);
     const byUidProfile = current.usersV2 || {};
@@ -333,7 +341,7 @@ async function verify(ctx, flags) {
     if (supers.length !== 1) fails.push('expected exactly one Superuser profile, found ' + supers.length);
     else {
         if (!authUids.has(supers[0])) fails.push('Superuser has no Auth user');
-        if (usersV2[supers[0]].name !== p.superName) fails.push('Superuser profile name differs from SUPER_ADMIN');
+        if (usersV2[supers[0]].name !== p.superName) fails.push('Superuser profile name differs from the expected Superuser name');
     }
 
     // profile checks, terminated agreement, roles
@@ -409,11 +417,11 @@ async function resetPassword(ctx, flags) {
 
 async function setSuperuser(ctx, flags) {
     if (!flags.username) throw new Error('set-superuser needs --username');
-    const superName = readSuperAdminConstant(ctx.appJsPath);
+    const superName = resolveSuperName(flags, (await ctx.db.ref('users').once('value')).val());
     const uid = await findUidByUsername(ctx, flags.username);
     const usersV2 = (await ctx.db.ref('usersV2').once('value')).val() || {};
     if (!usersV2[uid]) throw new Error('No profile for that user');
-    if (usersV2[uid].name !== superName) throw new Error('Profile name "' + usersV2[uid].name + '" is not SUPER_ADMIN "' + superName + '"');
+    if (usersV2[uid].name !== superName) throw new Error('Profile name "' + usersV2[uid].name + '" is not the Superuser "' + superName + '"');
     const db = G.guardedDb(ctx.db);
     const u = {};
     Object.keys(usersV2).forEach(id => { if (id !== uid && usersV2[id].isSuperAdmin === true) u['usersV2/' + id + '/isSuperAdmin'] = null; });
@@ -463,5 +471,5 @@ async function showPasswords(ctx, flags, file) {
 
 module.exports = {
     plan, run, verify, markCutover, clearCutover, resetPassword, setSuperuser, clearClaim,
-    deleteAuthUser, exportNew, showPasswords, readSuperAdminConstant, redact, LEGACY_NODES, NEW_NODES
+    deleteAuthUser, exportNew, showPasswords, resolveSuperName, redact, LEGACY_NODES, NEW_NODES
 };

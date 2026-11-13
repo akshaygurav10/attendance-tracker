@@ -5,7 +5,6 @@
 // own service-account key. It never writes or deletes a legacy node, `teams`
 // or `settings` (lib/guard.js). See README.md for the exact runbook commands.
 
-const path = require('path');
 const readline = require('readline');
 const C = require('./lib/commands');
 
@@ -25,7 +24,7 @@ Commands:
       [--allow-invalid]                  write data the rules would reject (not recommended)
       [--only <username>]                create/import a single account only
       [--out-dir <dir>] [--encrypt-csv]  where the git-ignored CSV files go; AES-256-GCM option
-      [--superuser "<name>"]             must equal SUPER_ADMIN in app.js
+      [--superuser "<name>"]             Superuser's exact name; default: the single legacy users/* record with isSuperAdmin
       [--force-after-cutover]            allow run after mark-cutover
   run --yes --rotate-all --resume --refresh --mirror --confirm-no-secure-usage
                                          final sync before cutover (runbook R8)
@@ -80,8 +79,7 @@ async function main(argv) {
         now: () => new Date().toISOString(),
         cwd: process.cwd(),
         env: process.env,
-        prompt,
-        appJsPath: path.join(__dirname, '..', '..', 'app.js')
+        prompt
     };
     if (cmd === 'show-passwords') return C.showPasswords(ctx, flags, args[0]);
     const conn = connect(flags);

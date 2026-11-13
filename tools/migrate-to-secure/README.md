@@ -48,6 +48,12 @@ covered by `.gitignore`; `run` refuses to start otherwise.
 `users/*` and the `admins`/`managers`/`memberTeams` data (the live app honors the
 arrays). Data-domain violations make `run` stop; fix them in the legacy app first.
 
+Superuser identification: the tool does not read the client code. The Superuser is
+the single legacy `users/*` record with `isSuperAdmin === true`, or the exact name given
+with `--superuser "<name>"`. If both are present they must match. With no flagged record
+and no flag, or several flagged records and no flag, the command stops with
+instructions. `verify` and `set-superuser` use the same rule.
+
 Password policy: `--rotate-all` (the default in the runbook) gives every user a random
 16+ character temporary password and `mustResetPassword`. The Superuser, Admins and
 Managers are always rotated. Importing legacy hashes for other users needs

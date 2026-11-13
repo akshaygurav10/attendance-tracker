@@ -177,7 +177,7 @@ test('run preconditions: --yes, a password policy flag, hash gate, gitignore, su
     await assert.rejects(C.run(ctx, { yes: true }), /one of --rotate-all/);
     await assert.rejects(C.run(ctx, { yes: true, 'no-rotate-all': true }), /requires --hash-test-passed/);
     await assert.rejects(C.run(ctx, { yes: true, 'rotate-all': true, refresh: true, resume: true }), /confirm-no-secure-usage/);
-    await assert.rejects(C.run(ctx, Object.assign({ superuser: 'Someone Else' }, RUN)), /does not match SUPER_ADMIN/);
+    await assert.rejects(C.run(ctx, Object.assign({ superuser: 'Someone Else' }, RUN)), /does not match the legacy Superuser record/);
     const bad = makeCtx(fakeDb(legacyFixture()), fakeAuth(), tmpDir('partial'));
     await assert.rejects(C.run(bad, RUN), /\.gitignore must contain/);
 });
@@ -400,13 +400,46 @@ test('delete-auth-user refuses when a profile exists; clear-claim refuses for a 
     assert.ok(auth.state.deleted.includes(orphan.uid));
 });
 
-test('set-superuser requires the SUPER_ADMIN name and leaves exactly one Superuser', async () => {
+test('set-superuser requires the resolved Superuser name and leaves exactly one Superuser', async () => {
     const { db, auth, ctx } = setup();
     await C.run(ctx, RUN);
-    await assert.rejects(C.setSuperuser(ctx, { username: 'eone' }), /is not SUPER_ADMIN/);
+    await assert.rejects(C.setSuperuser(ctx, { username: 'eone' }), /is not the Superuser/);
     await C.setSuperuser(ctx, { username: 'agurav' });
     assert.strictEqual(Object.values(db.get('usersV2')).filter(p => p.isSuperAdmin).length, 1);
     assert.ok(auth);
+});
+
+test('set-superuser works with the name given by --superuser when no legacy record is flagged', async () => {
+    const L = legacyFixture();
+    delete L.users[SUPER].isSuperAdmin;
+    const db = fakeDb(L);
+    const ctx = makeCtx(db, fakeAuth(), tmpDir());
+    await C.run(ctx, Object.assign({ superuser: SUPER }, RUN));
+    await assert.rejects(C.setSuperuser(ctx, { username: 'agurav' }), /No legacy users/);
+    await C.setSuperuser(ctx, { username: 'agurav', superuser: SUPER });
+    assert.strictEqual(Object.values(db.get('usersV2')).filter(p => p.isSuperAdmin).length, 1);
+});
+
+test('resolveSuperName: flag only, record only, match, mismatch, none, several', () => {
+    const rec = (n, s) => ({ name: n, isSuperAdmin: s });
+    const one = { A: rec('A', true), B: rec('B', false) };
+    assert.strictEqual(C.resolveSuperName({ superuser: 'X' }, { B: rec('B', false) }), 'X', 'flag only');
+    assert.strictEqual(C.resolveSuperName({}, one), 'A', 'record only');
+    assert.strictEqual(C.resolveSuperName({ superuser: 'A' }, one), 'A', 'match');
+    assert.throws(() => C.resolveSuperName({ superuser: 'B' }, one), /does not match/, 'mismatch');
+    assert.throws(() => C.resolveSuperName({}, { B: rec('B', false) }), /--superuser/, 'none');
+    assert.throws(() => C.resolveSuperName({}, null), /No legacy users/, 'none, no users node');
+    assert.throws(() => C.resolveSuperName({}, { A: rec('A', true), C: rec('C', true) }), /Several/, 'several, no flag');
+    assert.strictEqual(C.resolveSuperName({ superuser: 'C' }, { A: rec('A', true), C: rec('C', true) }), 'C', 'several, flag picks');
+});
+
+test('no code path reads app.js: ctx carries no appJsPath and the tool never mentions it', () => {
+    const { ctx } = setup();
+    assert.ok(!('appJsPath' in ctx));
+    for (const f of ['lib/commands.js', 'migrate.js']) {
+        const src = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+        assert.ok(!/appJsPath|app\.js|SUPER_ADMIN/.test(src), f);
+    }
 });
 
 test('export-new writes teamData and holidays only', async () => {
