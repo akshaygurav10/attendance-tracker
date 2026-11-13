@@ -38,8 +38,11 @@ const macros = {
         body: "(SI && ME.child('isAdmin').val() === true && ME.child('teamId').exists() && ME.child('teamId').val() === root.child('usersV2').child({0}).child('teamId').val() && root.child('usersV2').child({0}).child('isSuperAdmin').val() !== true && auth.uid !== {0})"
     },
     // Raw rule text (not JSON-escaped; the builder works on parsed strings).
-    // Test-gated fallbacks (design 7.1): see rules/RESULTS.md for which were used.
-    KEYRE: { params: 0, body: '/^[^$#\\[\\]\\/.\\x00-\\x1f\\x7f]{1,128}$/' }
+    // Test-gated fallback applied (design 7.1, rules/RESULTS.md): the emulator
+    // evaluates the control-character range \x00-\x1f\x7f as non-matching, so
+    // the range is dropped. Control characters are stripped by the client
+    // (secureNameKey) and reported by the migration as data-domain violations.
+    KEYRE: { params: 0, body: '/^[^$#\\[\\]\\/.]{1,128}$/' }
 };
 
 module.exports = { macros };

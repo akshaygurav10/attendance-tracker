@@ -73,7 +73,7 @@
           ".validate": "newData.isString() && newData.val().matches(/^[a-z0-9._-]{1,64}$/) && (!data.exists() || newData.val() === data.val())"
         },
         "memberKey": {
-          ".validate": "newData.isString() && newData.val().matches(/^[^$#\\[\\]\\/.\\x00-\\x1f\\x7f]{1,128}$/) && (!data.exists() || newData.val() === data.val())"
+          ".validate": "newData.isString() && newData.val().matches(/^[^$#\\[\\]\\/.]{1,128}$/) && (!data.exists() || newData.val() === data.val())"
         },
         "teamId": {
           ".write": "(((auth != null && root.child('usersV2').child(auth.uid).child('memberKey').exists() && root.child('usersV2').child(auth.uid).child('terminated').val() !== true) && root.child('usersV2').child(auth.uid).child('isSuperAdmin').val() === true)) || (auth.uid === $uid && !data.exists() && data.parent().exists() && data.parent().child('isAdmin').val() !== true && data.parent().child('isSuperAdmin').val() !== true && data.parent().child('isManager').val() !== true)",
@@ -116,7 +116,7 @@
       "$memberKey": {
         ".read": "auth != null && data.val() === auth.uid",
         ".write": "auth != null && !root.child('usersV2').child(auth.uid).exists() && ((!data.exists() && newData.val() === auth.uid) || (data.val() === auth.uid && !newData.exists()))",
-        ".validate": "newData.isString() && $memberKey.matches(/^[^$#\\[\\]\\/.\\x00-\\x1f\\x7f]{1,128}$/)"
+        ".validate": "newData.isString() && $memberKey.matches(/^[^$#\\[\\]\\/.]{1,128}$/)"
       }
     },
     "passwordResetRequests": {
@@ -124,6 +124,12 @@
       "$uid": {
         ".write": "(((auth != null && root.child('usersV2').child(auth.uid).child('memberKey').exists() && root.child('usersV2').child(auth.uid).child('terminated').val() !== true) && root.child('usersV2').child(auth.uid).child('isSuperAdmin').val() === true)) || ((auth != null && root.child('usersV2').child(auth.uid).child('memberKey').exists() && root.child('usersV2').child(auth.uid).child('terminated').val() !== true) && root.child('usersV2').child(auth.uid).child('isAdmin').val() === true && root.child('usersV2').child(auth.uid).child('teamId').exists() && root.child('usersV2').child(auth.uid).child('teamId').val() === root.child('usersV2').child($uid).child('teamId').val() && root.child('usersV2').child($uid).child('isSuperAdmin').val() !== true && auth.uid !== $uid)",
         ".validate": "newData.hasChildren(['requestedBy', 'requestedAt']) && newData.child('requestedBy').val() === auth.uid && newData.child('requestedAt').isString()",
+        "requestedBy": {
+          ".validate": "newData.isString()"
+        },
+        "requestedAt": {
+          ".validate": "newData.isString() && newData.val().length <= 40"
+        },
         "$other": {
           ".validate": false
         }

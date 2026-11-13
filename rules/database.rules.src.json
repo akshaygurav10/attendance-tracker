@@ -88,6 +88,8 @@
       "$uid": {
         ".write": "(SU) || ADMIN_OF($uid)",
         ".validate": "newData.hasChildren(['requestedBy', 'requestedAt']) && newData.child('requestedBy').val() === auth.uid && newData.child('requestedAt').isString()",
+        "requestedBy": { ".validate": "newData.isString()" },
+        "requestedAt": { ".validate": "newData.isString() && newData.val().length <= 40" },
         "$other": { ".validate": false }
       }
     },
