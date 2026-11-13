@@ -1,0 +1,10 @@
+# Normalize text files; the repository stores LF line endings.
+* text=auto
+*.js   text eol=lf
+*.html text eol=lf
+*.css  text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.png  binary
+*.jpg  binary
+*.ico  binary

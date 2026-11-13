@@ -486,6 +486,15 @@ An Admin sees and manages only members whose team equals the Admin's team; the S
 
 ---
 
+## Developer Notes
+
+### File encoding
+- All source and docs files are UTF-8 without a BOM, LF line endings in the repository (`.gitattributes`, `.editorconfig`). `index.html` declares `<meta charset="UTF-8">` as the first element in `<head>`.
+- Run `node tools/check-encoding.js` before committing. It exits non-zero if a tracked `.js/.html/.css/.md/.json` file has a BOM or mojibake (UTF-8 text decoded as Windows-1252 and saved again, which shows emoji such as 👑 as a run of accented Latin characters), or if `index.html` lacks the leading charset meta.
+- Do not edit files with Windows PowerShell 5 `Get-Content`/`Set-Content` without `-Encoding UTF8`; that is how app.js was corrupted in commit d3bbeb5 (fixed on `feature/server-side-team-isolation`).
+
+---
+
 ## Troubleshooting
 
 | Issue | Solution |
