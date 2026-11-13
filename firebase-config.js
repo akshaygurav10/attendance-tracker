@@ -13,11 +13,23 @@ const firebaseConfig = {
     databaseURL: "https://attendance-tracker-dca2b-default-rtdb.asia-southeast1.firebasedatabase.app"
 };
 
+// Security mode (design 4.0 / 10). "legacy" (default) runs the app exactly as
+// before. "secure" switches to Firebase Auth + per-team data + database rules.
+// Only set "secure" after the migration and the rules deploy (DEPLOYMENT.md,
+// FUTURE-ENHANCEMENTS.md runbook). Any other value is treated as "legacy".
+const SECURITY_MODE = "legacy";
+
 // Initialize Firebase
 const app = firebase.initializeApp(firebaseConfig);
 const database = firebase.database(app);
 
-// Test Firebase connection immediately
+// Firebase Auth is created only in secure mode; legacy mode creates no Auth instance.
+const firebaseAuth = (typeof SECURITY_MODE !== 'undefined' && SECURITY_MODE === 'secure' && typeof firebase.auth === 'function')
+    ? firebase.auth(app)
+    : null;
+
+// Test Firebase connection immediately (legacy mode only: the secure rules deny this path)
+if (!(typeof SECURITY_MODE !== 'undefined' && SECURITY_MODE === 'secure')) {
 database.ref('connectionTest').set({ timestamp: Date.now(), status: 'connected' })
     .then(() => {
         const indicator = document.getElementById('syncIndicator');
@@ -35,6 +47,7 @@ database.ref('connectionTest').set({ timestamp: Date.now(), status: 'connected' 
             indicator.style.fontSize = '12px';
         }
     });
+}
 
 // Monitor connection status
 database.ref('.info/connected').on('value', (snapshot) => {

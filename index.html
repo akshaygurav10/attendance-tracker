@@ -275,7 +275,14 @@
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+    <!-- Auth SDK: used only when SECURITY_MODE = "secure" (firebase-config.js) -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
     <script src="firebase-config.js"></script>
+    <!-- Secure-mode modules: define globals only; inert in legacy mode -->
+    <script src="auth-helpers.js"></script>
+    <script src="data-paths.js"></script>
+    <script src="secure-flows.js"></script>
+    <script src="secure-mode.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

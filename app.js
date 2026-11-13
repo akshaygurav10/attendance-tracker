@@ -2,6 +2,11 @@
 // ATTENDANCE TRACKER - Main Application
 // ==========================================
 
+// Security mode (design 4.0). Only the exact string "secure" in firebase-config.js
+// enables secure mode; anything else, or an old cached config without the flag,
+// runs the legacy code paths unchanged. Use MODE only, never SECURITY_MODE.
+const MODE = (typeof SECURITY_MODE !== 'undefined' && SECURITY_MODE === 'secure') ? 'secure' : 'legacy';
+
 const DEFAULT_TEAM_MEMBERS = [];
 
 // Load team members from Firebase or use defaults
@@ -16,6 +21,7 @@ function loadTeamMembers() {
 }
 
 function saveTeamMembers(members) {
+    if (MODE === 'secure') return; // secure mode never writes legacy nodes
     // Filter out null/undefined entries before saving
     members = members.filter(m => m && m.trim() !== '');
     localStorage.setItem('attendance_team_members', JSON.stringify(members));
@@ -60,6 +66,7 @@ function getAdminList() {
 }
 
 function saveAdminList(admins) {
+    if (MODE === 'secure') return; // secure mode never writes legacy nodes
     localStorage.setItem('attendance_admin_list', JSON.stringify(admins));
     if (typeof database !== 'undefined') {
         database.ref('admins').set(admins);
@@ -69,6 +76,8 @@ function saveAdminList(admins) {
 let ADMIN_MEMBERS = getAdminList();
 
 function getCurrentUser() {
+    // Secure mode: derived from the Firebase Auth session and usersV2 profile, never localStorage
+    if (MODE === 'secure') return SecureMode.currentUserName();
     return localStorage.getItem('attendance_current_user');
 }
 
@@ -77,6 +86,7 @@ function setCurrentUser(name) {
 }
 
 function isAdmin() {
+    if (MODE === 'secure') return SecureMode.isAdminUser();
     const user = getCurrentUser();
     if (!user) return false;
     if (user === SUPER_ADMIN) return true;
@@ -107,15 +117,18 @@ function escapeHtml(value) {
 }
 
 function isSuperUser() {
+    if (MODE === 'secure') return SecureMode.isSuper();
     return getCurrentUser() === SUPER_ADMIN;
 }
 
 function isManager() {
+    if (MODE === 'secure') return SecureMode.isManagerUser();
     const user = getCurrentUser();
     return !!user && Array.isArray(MANAGERS) && MANAGERS.includes(user);
 }
 
 function getMemberTeamId(name) {
+    if (MODE === 'secure') return SecureMode.memberTeamId(name);
     if (!name) return null;
     return (MEMBER_TEAMS && MEMBER_TEAMS[nameKey(name)]) || null;
 }
@@ -138,6 +151,7 @@ function getMyTeamLabel() {
 // Admin who is not the Superuser: scoped to their own team
 /** Only ordinary users may pick their own first team; Admins/Superuser are assigned by the Superuser. */
 function canSelfAssignTeam(name, userData) {
+    if (MODE === 'secure') return SecureMode.canSelfAssign(); // also excludes Managers (Q13)
     if (!name || name === SUPER_ADMIN) return false;
     return !(ADMIN_MEMBERS.includes(name) || (userData && userData.isAdmin));
 }
@@ -201,7 +215,11 @@ function canViewSummary() {
     return isAdmin() || isManager() || everyoneSeesAllEnabled();
 }
 
-function canManageHolidays() { return isSuperUser() || (ADMIN_CAN_EDIT_HOLIDAYS && isAdmin()); }
+function canManageHolidays() {
+    // Secure mode: the server flag settings/adminCanEditHolidays is authoritative (Q1)
+    if (MODE === 'secure') return isSuperUser() || (SecureMode.adminCanEditHolidays() && isAdmin());
+    return isSuperUser() || (ADMIN_CAN_EDIT_HOLIDAYS && isAdmin());
+}
 function canImportData() { return isSuperUser(); }
 function canManageTeam() { return isAdmin(); }
 function canUseReports() { return isAdmin(); }
@@ -316,6 +334,8 @@ class AttendanceData {
     }
 
     loadLocal() {
+        // Secure mode keeps no team data in localStorage (design 4.4)
+        if (MODE === 'secure') { this.data = this.getDefaultData(); return; }
         // Load from localStorage first (immediate)
         const saved = localStorage.getItem('attendance_tracker_data');
         if (saved) {
@@ -330,6 +350,7 @@ class AttendanceData {
     }
 
     startListeners() {
+        if (MODE === 'secure') { SecureMode.startListeners(this); return; }
         // Sync with Firebase
         if (typeof database !== 'undefined' && this._listeners.length === 0) {
             this._listen('appData', (snapshot) => {
@@ -418,6 +439,7 @@ class AttendanceData {
     }
 
     save() {
+        if (MODE === 'secure') return; // secure mode writes granular paths instead of the blob
         if (!getCurrentUser()) return;
         this.data.lastUpdated = new Date().toISOString();
         localStorage.setItem('attendance_tracker_data', JSON.stringify(this.data));
@@ -425,6 +447,7 @@ class AttendanceData {
     }
 
     saveToFirebase() {
+        if (MODE === 'secure') return; // never writes appData in secure mode
         if (typeof database !== 'undefined') {
             // Guard: never overwrite with empty data if we haven't loaded from Firebase yet
             if (!this.firebaseReady) return;
@@ -500,6 +523,7 @@ class AttendanceData {
 
     markAttendance(member, date, present) {
         if (!canEdit(member)) { denyAction('You do not have permission to edit this member\'s attendance.'); return; }
+        if (MODE === 'secure') { SecureMode.markAttendance(this, member, date, present); return; }
         if (!this.data.attendance) this.data.attendance = {};
         if (!this.data.attendance[member]) {
             this.data.attendance[member] = {};
@@ -524,6 +548,7 @@ class AttendanceData {
     markLeave(member, date, type) {
         // type: "leave", "wfh", "exception"
         if (!canEdit(member)) { denyAction('You do not have permission to edit this member\'s attendance.'); return; }
+        if (MODE === 'secure') { SecureMode.markLeave(this, member, date, type); return; }
         if (!this.data.leaves[member]) {
             this.data.leaves[member] = {};
         }
@@ -537,6 +562,7 @@ class AttendanceData {
 
     removeLeave(member, date) {
         if (!canEdit(member)) { denyAction('You do not have permission to edit this member\'s attendance.'); return; }
+        if (MODE === 'secure') { SecureMode.removeLeave(this, member, date); return; }
         if (this.data.leaves[member]) {
             delete this.data.leaves[member][date];
             this.save();
@@ -556,6 +582,7 @@ class AttendanceData {
 
     addHoliday(date, name) {
         if (!canManageHolidays()) { denyAction('You do not have permission to manage holidays.'); return; }
+        if (MODE === 'secure') { SecureMode.addHoliday(this, date, name); return; }
         if (!this.data.holidays.find(h => h.date === date)) {
             this.data.holidays.push({ date, name });
             this.data.holidays.sort((a, b) => a.date.localeCompare(b.date));
@@ -565,6 +592,7 @@ class AttendanceData {
 
     removeHoliday(date) {
         if (!canManageHolidays()) { denyAction('You do not have permission to manage holidays.'); return; }
+        if (MODE === 'secure') { SecureMode.removeHoliday(this, date); return; }
         this.data.holidays = this.data.holidays.filter(h => h.date !== date);
         this.save();
     }
@@ -653,6 +681,7 @@ class AttendanceData {
 
     importJSON(jsonStr) {
         if (!canImportData()) { denyAction('Only the Superuser can import data.'); return false; }
+        if (MODE === 'secure') return SecureMode.importJSON(this, jsonStr);
         try {
             const imported = JSON.parse(jsonStr);
             if (imported.attendance && imported.holidays) {
@@ -723,6 +752,7 @@ class App {
     }
 
     init() {
+        if (MODE === 'secure') { SecureMode.init(this); return; }
         this.loadTheme();
         const currentUser = getCurrentUser();
         if (currentUser && TEAM_MEMBERS.includes(currentUser)) {
@@ -742,6 +772,7 @@ class App {
 
     // Reveal the app for the signed-in user and start data sync
     unlockApp() {
+        if (MODE === 'secure') { SecureMode.unlockApp(this); return; }
         document.body.classList.remove('auth-locked');
         this.data.loadLocal();
         this.data.startListeners();
@@ -749,6 +780,8 @@ class App {
 
     // Return to a clean logged-out state: nothing from the previous user remains
     lockApp() {
+        // Secure mode: also sign out of Firebase Auth and drop the profile (design 4.4)
+        if (MODE === 'secure') SecureMode.beforeLock();
         document.body.classList.add('auth-locked');
 
         // Stop realtime sync and drop in-memory data
@@ -845,6 +878,7 @@ class App {
     async loadTeamOptions() {
         const loginSel = document.getElementById('loginTeam');
         const regSel = document.getElementById('registerTeam');
+        if (MODE === 'secure') return SecureMode.loadTeamOptions(); // reads the public teamNames only
         if (!loginSel || !regSel || typeof database === 'undefined') return;
         let teams = {};
         try {
@@ -912,6 +946,7 @@ class App {
     }
 
     async handleLogin() {
+        if (MODE === 'secure') return SecureMode.login(this);
         const usernameInput = document.getElementById('loginUsername').value.trim();
         const password = document.getElementById('loginPassword').value;
         const errorEl = document.getElementById('loginError');
@@ -1076,6 +1111,7 @@ class App {
     }
 
     async handleRegister() {
+        if (MODE === 'secure') return SecureMode.register(this);
         const name = document.getElementById('registerName').value.trim();
         const password = document.getElementById('registerPassword').value;
         const confirm = document.getElementById('registerConfirm').value;
@@ -1154,6 +1190,8 @@ class App {
     }
 
     async resetPasswordForMember(member) {
+        // Secure mode: only the Admin SDK can set a password, so this becomes a request (design 4.5)
+        if (MODE === 'secure') return SecureMode.requestReset(member);
         if (!isAdmin() || !canAdminMember(member)) {
             alert('You can only reset passwords for members of your own team.');
             return;
@@ -1166,6 +1204,7 @@ class App {
     }
 
     updateUserDisplay() {
+        if (MODE === 'secure') { SecureMode.updateUserDisplay(this); return; }
         const user = getCurrentUser();
         const display = document.getElementById('currentUserDisplay');
         if (user) {
@@ -1230,6 +1269,7 @@ class App {
     }
 
     updateUIPermissions() {
+        if (MODE === 'secure') { SecureMode.updateUIPermissions(this); return; }
         this.applyRoleVisibility();
         const summaryBtn = document.getElementById('btnSummaryView');
 
@@ -1256,6 +1296,7 @@ class App {
     }
 
     async changeOwnPassword() {
+        if (MODE === 'secure') return SecureMode.changeOwnPassword();
         const currentUser = getCurrentUser();
         if (!currentUser) return;
 
@@ -1790,7 +1831,7 @@ class App {
                 </div>
                 <div class="team-member-actions">
                     ${canAct ? `<button class="btn-edit" data-member="${m}" title="Edit name">âœï¸</button>` : ''}
-                    ${canAct && !isSelf ? `<button class="btn-reset-pw" data-member="${m}" title="Reset password">ðŸ”‘</button>` : ''}
+                    ${canAct && !isSelf && (MODE !== 'secure' || SecureMode.hasAccount(member)) ? `<button class="btn-reset-pw" data-member="${m}" title="${MODE === 'secure' ? 'Request password reset' : 'Reset password'}">ðŸ”‘</button>` : ''}
                     ${canAct && !isSelf && !isSuperAdmin ? `<button class="btn-delete" data-member="${m}" title="Remove">Remove</button>` : ''}
                 </div>
             </div>`;
@@ -1810,7 +1851,9 @@ class App {
         list.innerHTML = html;
 
         // Load terminated users from Firebase
-        if (currentUserIsAdmin && typeof database !== 'undefined') {
+        if (MODE === 'secure') {
+            if (currentUserIsAdmin) SecureMode.renderTerminatedSection();
+        } else if (currentUserIsAdmin && typeof database !== 'undefined') {
             database.ref('users').once('value').then((snapshot) => {
                 const users = snapshot.val();
                 if (!users) return;
@@ -1897,6 +1940,7 @@ class App {
             denyAction('You can only reorder members of your own team.');
             return false;
         }
+        if (MODE === 'secure') return SecureMode.reorderMembers(dragged, target);
         const from = TEAM_MEMBERS.indexOf(dragged);
         const to = TEAM_MEMBERS.indexOf(target);
         if (from < 0 || to < 0) return false;
@@ -1911,6 +1955,7 @@ class App {
             alert('âš ï¸ Only the Superuser can reset the team list.');
             return;
         }
+        if (MODE === 'secure') { denyAction('Resetting the team list is not available in secure mode.'); return; }
         if (!confirm('Reset team list to the default members?\n\nThis will replace the current list. Attendance data is preserved.')) return;
         TEAM_MEMBERS = [...DEFAULT_TEAM_MEMBERS];
         saveTeamMembers(TEAM_MEMBERS);
@@ -1937,6 +1982,7 @@ class App {
             ? `Make "${member}" an admin?\n\nAdmins can edit attendance and manage members of their own team only.`
             : `Remove admin rights from "${member}"?`;
         if (!confirm(msg)) { this.renderTeamManagement(); return false; }
+        if (MODE === 'secure') return SecureMode.setRole(this, member, 'isAdmin', makeAdmin);
         ADMIN_MEMBERS = makeAdmin ? [...ADMIN_MEMBERS, member] : ADMIN_MEMBERS.filter(m => m !== member);
         saveAdminList(ADMIN_MEMBERS);
         if (typeof database !== 'undefined') {
@@ -1951,6 +1997,7 @@ class App {
         if (!member || !TEAM_MEMBERS.includes(member) || typeof database === 'undefined') return false;
         const has = MANAGERS.includes(member);
         if (makeManager === has) return true;
+        if (MODE === 'secure') return SecureMode.setRole(this, member, 'isManager', makeManager);
         const next = makeManager ? [...MANAGERS, member] : MANAGERS.filter(m => m !== member);
         MANAGERS = next;
         database.ref().update({
@@ -1972,6 +2019,7 @@ class App {
             alert('âš ï¸ A team with this name already exists.');
             return false;
         }
+        if (MODE === 'secure') return SecureMode.createTeam(name); // teams + teamNames in one update
         const id = database.ref('teams').push().key;
         database.ref('teams/' + id).set({
             id, name, createdBy: getCurrentUser(), createdAt: new Date().toISOString()
@@ -1991,6 +2039,7 @@ class App {
             alert('âš ï¸ A team with this name already exists.');
             return false;
         }
+        if (MODE === 'secure') return SecureMode.renameTeam(teamId, name);
         database.ref('teams/' + teamId + '/name').set(name);
         return true;
     }
@@ -2002,6 +2051,7 @@ class App {
         if (!team || typeof database === 'undefined') return false;
         const memberKeys = Object.keys(MEMBER_TEAMS).filter(k => MEMBER_TEAMS[k] === teamId);
         if (!confirm(`Delete team "${team.name}"?\n\n${memberKeys.length} member(s) will become Unassigned. No users or attendance data are deleted.`)) return false;
+        if (MODE === 'secure') return SecureMode.deleteTeam(teamId); // members move to unassigned
         const updates = { ['teams/' + teamId]: null };
         memberKeys.forEach(k => {
             updates['memberTeams/' + k] = null;
@@ -2016,6 +2066,7 @@ class App {
         if (!member || !TEAM_MEMBERS.includes(member) || typeof database === 'undefined') return false;
         teamId = teamId || null;
         if (teamId && !TEAMS[teamId]) return false;
+        if (MODE === 'secure') return SecureMode.assignTeam(member, teamId); // moves roster and history
         const key = nameKey(member);
         database.ref().update({
             ['users/' + key + '/teamId']: teamId,
@@ -2109,6 +2160,8 @@ class App {
             return;
         }
 
+        if (MODE === 'secure') return SecureMode.addMember(this, name, teamId);
+
         // Check if member exists in Firebase (might be terminated)
         try {
             if (typeof database !== 'undefined') {
@@ -2168,6 +2221,12 @@ class App {
             alert('âš ï¸ A member with this name already exists!');
             return;
         }
+        if (MODE === 'secure') {
+            SecureMode.editMember(this, oldName, trimmed);
+            this.renderTeamList();
+            this.renderTeamManagement();
+            return;
+        }
         const index = TEAM_MEMBERS.indexOf(oldName);
         if (index !== -1) {
             TEAM_MEMBERS[index] = trimmed;
@@ -2205,6 +2264,9 @@ class App {
         }
         if (!confirm(`Are you sure you want to remove "${name}" from the team?\n\nThey will be marked as terminated but can be restored later.`)) return;
 
+        // Secure mode: profile + roster flags in one update; isAdmin cleared (design 5.3)
+        if (MODE === 'secure') { SecureMode.removeMember(this, name); return; }
+
         // Soft delete: mark as terminated in Firebase
         const sanitizedName = name.replace(/\./g, '___DOT___');
         if (typeof database !== 'undefined') {
@@ -2232,6 +2294,7 @@ class App {
 
     async restoreMember(name) {
         if (!canManageTeam()) { denyAction('Only admins can restore team members.'); return; }
+        if (MODE === 'secure') return SecureMode.restoreMember(this, name);
         // Terminated members keep their team record; no team => Superuser only
         if (!canAdminTeamId(MEMBER_TEAMS[nameKey(name)] || null)) {
             denyAction('You can only restore members of your own team.');
