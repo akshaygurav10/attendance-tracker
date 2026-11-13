@@ -1,0 +1,141 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "teamNames": {
+      ".read": true,
+      ".write": "SU",
+      "$teamId": {
+        ".validate": "$teamId !== 'unassigned' && newData.isString() && newData.val().length > 0 && newData.val().length <= 100"
+      }
+    },
+    "teams": {
+      ".read": "SI",
+      ".write": "SU",
+      "$teamId": {
+        ".validate": "$teamId !== 'unassigned' && newData.hasChildren(['id', 'name']) && newData.child('id').val() === $teamId",
+        "id": { ".validate": "newData.isString()" },
+        "name": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100" },
+        "createdBy": { ".validate": "newData.isString() && newData.val().length <= 100" },
+        "createdAt": { ".validate": "newData.isString() && newData.val().length <= 40" },
+        "$other": { ".validate": false }
+      }
+    },
+    "settings": {
+      ".read": "SI",
+      "everyoneSeesAll": { ".write": "SU", ".validate": "newData.isBoolean()" },
+      "adminCanEditHolidays": { ".write": "SU", ".validate": "newData.isBoolean()" },
+      "$other": { ".validate": false }
+    },
+    "holidays": {
+      ".read": "SI",
+      ".write": "(SU) || (SI && ME.child('isAdmin').val() === true && root.child('settings').child('adminCanEditHolidays').val() === true)",
+      ".validate": "newData.hasChildren()",
+      "$date": {
+        ".validate": "$date.matches(/^\\d{4}-\\d{2}-\\d{2}$/) && newData.hasChildren(['name'])",
+        "name": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100" },
+        "$other": { ".validate": false }
+      }
+    },
+    "usersV2": {
+      ".read": "SU",
+      "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || (SU) || (SI && ME.child('isAdmin').val() === true && ME.child('teamId').exists() && data.child('teamId').val() === ME.child('teamId').val()))",
+        ".write": "auth != null && auth.uid === $uid && !data.exists() && root.child('memberOwners').child(newData.child('memberKey').val()).val() === auth.uid",
+        ".validate": "newData.hasChildren(['name', 'username', 'memberKey', 'isAdmin', 'isManager', 'terminated', 'registeredAt']) && (data.exists() || (newData.child('isAdmin').val() === false && newData.child('isManager').val() === false && !newData.child('isSuperAdmin').exists() && newData.child('terminated').val() === false && !newData.child('terminatedAt').exists() && !newData.child('mustResetPassword').exists() && newData.child('name').val().replace('.', '___DOT___') === newData.child('memberKey').val()))",
+        "name": {
+          ".write": "(SU && auth.uid !== $uid) || ADMIN_OF($uid)",
+          ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100"
+        },
+        "username": {
+          ".validate": "newData.isString() && newData.val().matches(/^[a-z0-9._-]{1,64}$/) && (!data.exists() || newData.val() === data.val())"
+        },
+        "memberKey": {
+          ".validate": "newData.isString() && newData.val().matches(KEYRE) && (!data.exists() || newData.val() === data.val())"
+        },
+        "teamId": {
+          ".write": "(SU) || (auth.uid === $uid && !data.exists() && data.parent().exists() && data.parent().child('isAdmin').val() !== true && data.parent().child('isSuperAdmin').val() !== true && data.parent().child('isManager').val() !== true)",
+          ".validate": "newData.isString() && root.child('teamNames').child(newData.val()).exists()"
+        },
+        "isAdmin": { ".write": "(SU && auth.uid !== $uid) || (ADMIN_OF($uid) && newData.val() === false)", ".validate": "newData.isBoolean()" },
+        "isManager": { ".write": "SU", ".validate": "newData.isBoolean()" },
+        "isSuperAdmin": { ".write": false, ".validate": "newData.isBoolean()" },
+        "terminated": { ".write": "(SU && auth.uid !== $uid) || ADMIN_OF($uid)", ".validate": "newData.isBoolean()" },
+        "terminatedAt": {
+          ".write": "(SU && auth.uid !== $uid) || ADMIN_OF($uid)",
+          ".validate": "newData.isString() && newData.val().length <= 40"
+        },
+        "mustResetPassword": {
+          ".write": "(SU) || (ADMIN_OF($uid) && newData.val() === true) || (auth.uid === $uid && data.val() === true && !newData.exists())",
+          ".validate": "newData.val() === true"
+        },
+        "registeredAt": {
+          ".validate": "newData.isString() && newData.val().length <= 40 && (!data.exists() || newData.val() === data.val())"
+        },
+        "$other": { ".validate": false }
+      }
+    },
+    "memberOwners": {
+      ".read": "SU",
+      "$memberKey": {
+        ".read": "auth != null && data.val() === auth.uid",
+        ".write": "auth != null && !root.child('usersV2').child(auth.uid).exists() && ((!data.exists() && newData.val() === auth.uid) || (data.val() === auth.uid && !newData.exists()))",
+        ".validate": "newData.isString() && $memberKey.matches(KEYRE)"
+      }
+    },
+    "passwordResetRequests": {
+      ".read": "SU",
+      "$uid": {
+        ".write": "(SU) || ADMIN_OF($uid)",
+        ".validate": "newData.hasChildren(['requestedBy', 'requestedAt']) && newData.child('requestedBy').val() === auth.uid && newData.child('requestedAt').isString()",
+        "requestedBy": { ".validate": "newData.isString()" },
+        "requestedAt": { ".validate": "newData.isString() && newData.val().length <= 40" },
+        "$other": { ".validate": false }
+      }
+    },
+    "teamData": {
+      ".read": "SU",
+      "$teamId": {
+        "members": {
+          ".read": "TW($teamId)",
+          "$memberKey": {
+            ".read": "(SELF($memberKey)) && (BUCKET($teamId) || $teamId === 'unassigned')",
+            ".write": "(SU && !(SELF($memberKey) && !newData.exists())) || (ADM($teamId) && ORD($memberKey)) || ((SELF($memberKey)) && ((!data.exists() && BUCKET($teamId)) || ($teamId === 'unassigned' && !newData.exists())))",
+            ".validate": "newData.hasChildren(['name']) && (!newData.child('uid').exists() || newData.child('uid').val() === data.child('uid').val() || (SU) || (newData.child('uid').val() === auth.uid && $memberKey === ME.child('memberKey').val())) && (data.exists() || (SU) || (ADM($teamId)) || newData.child('name').val() === ME.child('name').val())",
+            "name": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100 && (!(SU && SELF($memberKey)) || !data.exists() || newData.val() === data.val())" },
+            "order": { ".validate": "newData.isNumber()" },
+            "addedBy": { ".validate": "newData.isString() && newData.val().length <= 100" },
+            "terminated": { ".validate": "newData.isBoolean() && (newData.val() === false || (!((SU) && (SELF($memberKey))) && ((SU) || (ADM($teamId)))))" },
+            "uid": {
+              ".write": "(SELF($memberKey)) && BUCKET($teamId) && !data.exists() && newData.val() === auth.uid",
+              ".validate": "newData.isString()"
+            },
+            "$other": { ".validate": false }
+          }
+        },
+        "attendance": {
+          ".read": "TW($teamId)",
+          "$memberKey": {
+            ".read": "(SELF($memberKey)) && (BUCKET($teamId) || $teamId === 'unassigned')",
+            ".write": "(SU) || (ADM($teamId) && ORD($memberKey)) || ((SELF($memberKey)) && (BUCKET($teamId) || ($teamId === 'unassigned' && !newData.exists())))",
+            ".validate": "newData.hasChildren()",
+            "$date": {
+              ".validate": "$date.matches(/^\\d{4}-\\d{2}-\\d{2}$/) && newData.val() === true"
+            }
+          }
+        },
+        "leaves": {
+          ".read": "TW($teamId)",
+          "$memberKey": {
+            ".read": "(SELF($memberKey)) && (BUCKET($teamId) || $teamId === 'unassigned')",
+            ".write": "(SU) || (ADM($teamId) && ORD($memberKey)) || ((SELF($memberKey)) && (BUCKET($teamId) || ($teamId === 'unassigned' && !newData.exists())))",
+            ".validate": "newData.hasChildren()",
+            "$date": {
+              ".validate": "$date.matches(/^\\d{4}-\\d{2}-\\d{2}$/) && (newData.val() === 'leave' || newData.val() === 'wfh' || newData.val() === 'wfh-email' || newData.val() === 'exception' || newData.val() === 'planned')"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "id": "FEAT-004",
+  "type": "feat",
+  "description": "Optional App Check (reCAPTCHA v3), off by default; docs (permission matrix, Superuser identification, FAQ 'Can someone override this from dev tools?', runbook optional steps, why obfuscation is not security); final-report open items; hardening-verification.md. Depends on FEAT-001..003 for accurate docs and results.",
+  "status": "completed",
+  "steps": [
+    "Verify on current docs that App Check with reCAPTCHA v3 works on the free Spark plan and note quotas: open https://firebase.google.com/pricing, https://firebase.google.com/docs/app-check and https://firebase.google.com/docs/app-check/web/recaptcha-provider (use web_fetch/web search) and the reCAPTCHA pricing page. Save URLs and quota numbers for the docs. If free use cannot be confirmed, do NOT add code; instead document that and skip the code steps below.",
+    "firebase-config.js: add `const APP_CHECK_SITE_KEY = \"\";` with a comment; add new app-check-init.js and wire it in index.html so that only when the key is non-empty it loads firebase-app-check-compat.js (same Firebase version as the other compat scripts) and activates App Check with isTokenAutoRefreshEnabled before the first database call; empty key => no extra script and no calls; failure to load must not break the app. Add tools/tests/app-check.test.js (vm: empty key -> nothing loaded/activated; non-empty key -> activated once with that key; load failure tolerated).",
+    "Docs: DOCUMENTATION.md, DEPLOYMENT.md, FUTURE-ENHANCEMENTS.md (runbook optional steps and Superuser identification in migration), DESIGN-server-side-isolation.md (permission matrix), rules/RESULTS.md. Content: permission matrix (actor x target x action); Superuser identification (secure: isSuperAdmin flag set only by Admin SDK; migration: --superuser or legacy record; legacy Superuser keeps logging in with the existing password; fresh legacy DB needs a manual console step; legacy remains insecure regardless); FAQ 'Can someone override this from dev tools?' (they can change their own browser, not what the rules accept; code and public Firebase config are visible by design); App Check manual steps (register app with reCAPTCHA v3, set APP_CHECK_SITE_KEY, enforce for Realtime Database only after metrics look good), API key HTTP-referrer restriction for the GitHub Pages domain, email enumeration protection; App Check raises the bar but is not authorization (rules are); obfuscation/minification is not a security measure and why. Remove the DOCUMENTATION.md/DEPLOYMENT.md 'First Time Setup' text that says typing the Superuser name auto-registers.",
+    "Update .agents/tasks/server-isolation/final-report.md: mark open items 1 and 2 resolved with commit ids and add a short 'Hardening' section; keep items 3-7.",
+    "Run the full verification set and write .agents/tasks/server-isolation/hardening-verification.md with exact commands, result counts, and what was NOT run (no browser, no real Firebase/App Check, no Auth emulator, no production lookup limits): cd rules && node build-rules.js && git diff --exit-code ../database.rules.json; node --test build-rules.test.js; npm run test:rules; node --test tools/tests/*.test.js; cd tools/migrate-to-secure && npm test; node --check on every JS file outside node_modules; JSON.parse of database.rules.json; git ls-files shows no CSV, key, state file or node_modules."
+  ],
+  "acceptance_criteria": [
+    "With APP_CHECK_SITE_KEY empty the app behaves as before (tools/tests/legacy-mode.test.js passes)",
+    "node --test tools/tests/*.test.js passes including app-check.test.js",
+    "Docs contain the permission matrix, FAQ, runbook optional steps with cited source URLs, and the honest legacy-insecure statement",
+    "hardening-verification.md exists and lists run and not-run items with real output counts"
+  ],
+  "verification": [
+    "node --test tools/tests/*.test.js",
+    "cd rules && npm run test:rules",
+    "cd tools/migrate-to-secure && npm test"
+  ],
+  "blocked_reason": null,
+  "findings": "App Check added (1d8232a): firebase-config.js APP_CHECK_SITE_KEY = \"\", app-check-init.js (loads firebase-app-check-compat 9.23.0 via document.write only when key set, activates with auto-refresh, failures swallowed), wired in index.html after firebase-config.js; tools/tests/app-check.test.js 6 tests. Limitation: the legacy connectionTest write in firebase-config.js runs before activation. Free-use check: pricing page says App Check no-cost subject to provider quotas; App Check overview gives 10,000 free reCAPTCHA Enterprise assessments/month and lists Enterprise as the web provider; the v3 page gives no own quota, so code is opt-in and docs tell the owner to check the reCAPTCHA console. Docs updated (DOCUMENTATION, DEPLOYMENT, FUTURE-ENHANCEMENTS, DESIGN 6.1 matrix, rules/RESULTS.md). Results: build-rules 7/7, emulator 243/243, client 113/113, migration 38/38, node --check 34 files ok. hardening-verification.md written. Final-report items 1 and 2 marked resolved. Note: Node 24 needs explicit test file paths; npm.ps1 blocked by execution policy; shell output is unreliable so results were redirected to files."
+}

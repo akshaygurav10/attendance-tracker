@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Migration artifacts (never commit: they hold temporary passwords or fingerprints)
+migration-state.json
+migration-*.csv
+migration-usernames-*.csv
+migration-temp-passwords-*
+*.csv.enc
+*.csv
+
+# Service account keys and credentials
+service-account*.json
+serviceAccount*.json
+*-adminsdk-*.json
+.env
+.env.*
+
+# Firebase local files
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+ui-debug.log
+database-debug.log
