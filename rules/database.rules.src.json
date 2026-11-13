@@ -99,7 +99,7 @@
         "members": {
           ".read": "TW($teamId)",
           "$memberKey": {
-            ".read": "(SELF($memberKey)) && BUCKET($teamId)",
+            ".read": "(SELF($memberKey)) && (BUCKET($teamId) || $teamId === 'unassigned')",
             ".write": "(SU) || (ADM($teamId)) || ((SELF($memberKey)) && ((!data.exists() && BUCKET($teamId)) || ($teamId === 'unassigned' && !newData.exists())))",
             ".validate": "newData.hasChildren(['name']) && (!newData.child('uid').exists() || newData.child('uid').val() === data.child('uid').val() || (SU) || (newData.child('uid').val() === auth.uid && $memberKey === ME.child('memberKey').val())) && (data.exists() || (SU) || (ADM($teamId)) || newData.child('name').val() === ME.child('name').val())",
             "name": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100" },
@@ -116,7 +116,7 @@
         "attendance": {
           ".read": "TW($teamId)",
           "$memberKey": {
-            ".read": "(SELF($memberKey)) && BUCKET($teamId)",
+            ".read": "(SELF($memberKey)) && (BUCKET($teamId) || $teamId === 'unassigned')",
             ".write": "(SU) || (ADM($teamId)) || ((SELF($memberKey)) && (BUCKET($teamId) || ($teamId === 'unassigned' && !newData.exists())))",
             ".validate": "newData.hasChildren()",
             "$date": {
@@ -127,7 +127,7 @@
         "leaves": {
           ".read": "TW($teamId)",
           "$memberKey": {
-            ".read": "(SELF($memberKey)) && BUCKET($teamId)",
+            ".read": "(SELF($memberKey)) && (BUCKET($teamId) || $teamId === 'unassigned')",
             ".write": "(SU) || (ADM($teamId)) || ((SELF($memberKey)) && (BUCKET($teamId) || ($teamId === 'unassigned' && !newData.exists())))",
             ".validate": "newData.hasChildren()",
             "$date": {

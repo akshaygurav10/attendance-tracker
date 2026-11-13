@@ -347,8 +347,19 @@ describe('self move (first team assignment, no SELFMOVE)', () => {
         await assertSucceeds(write('admA', 'teamData/tA/members/NewGuy', { name: 'New Guy', order: 9 }));
         await assertSucceeds(write('su', 'teamData/tA/members/NewGal', { name: 'New Gal', order: 10 }));
     });
+    test('after teamId is set, own unassigned copies stay readable for move repair; others are not', async () => {
+        await assertSucceeds(write('una1', 'usersV2/una1/teamId', 'tA'));
+        await assertSucceeds(read('una1', 'teamData/unassigned/members/Una1'));
+        await assertSucceeds(read('una1', 'teamData/unassigned/attendance/Una1'));
+        await assertSucceeds(read('una1', 'teamData/unassigned/leaves/Una1'));
+        await assertFails(read('una1', 'teamData/unassigned/attendance/Una2'));
+        await assertFails(read('empA', 'teamData/unassigned/attendance/Una1'));
+        await assertFails(read('una1', 'teamData/tB/attendance/Una1'));
+    });
     test('interrupted move: after step 2 only, step 3 later succeeds and nothing is lost', async () => {
         await assertSucceeds(write('una1', 'usersV2/una1/teamId', 'tA'));
+        // simulated reload: the repair re-reads the leftover unassigned copies first
+        await assertSucceeds(read('una1', 'teamData/unassigned/attendance/Una1'));
         // simulated reload: new context, redo step 3
         await assertSucceeds(upd('una1', step3('Una1', 'tA')));
         await assertSucceeds(read('una1', 'teamData/tA/attendance/Una1'));

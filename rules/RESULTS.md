@@ -18,8 +18,11 @@ npm run test:rules             # firebase emulators:exec --only database ... nod
 ## Result
 
 - `build-rules.test.js`: 6 tests, 6 pass.
-- `database.rules.test.js` (emulator): **72 tests, 72 pass, 0 fail** (EXECUTED).
-- Expanded `database.rules.json` size: **25,780 bytes**.
+- `database.rules.test.js` (emulator): **73 tests, 73 pass, 0 fail** (EXECUTED).
+- `client-flows.test.js` (emulator; the real `secure-flows.js` / `data-paths.js` client
+  writes run as each role against these rules): **16 tests, 16 pass** (EXECUTED).
+  Auth is a local stub there (uids only); Firebase Auth itself is not emulated.
+- Expanded `database.rules.json` size: **25,870 bytes**.
 
 ## Lookup-limit acceptance gate (design 2.1)
 
@@ -47,3 +50,13 @@ Caveat: the emulator is the evidence here; production limits were not exercised.
 `requestedBy`/`requestedAt` children, so `$other` matched them and every request was
 rejected. Added `requestedBy` (`isString()`) and `requestedAt` (`isString()`, length <= 40)
 child rules. This makes the designed behaviour work; it grants nothing new.
+
+Login step 6b ("move repair", design 4.2) must re-read a user's own leftover
+`teamData/unassigned/...` copies after `teamId` has been set. As written, the per-key
+`.read` was `SELF($memberKey) && BUCKET($teamId)`, and `BUCKET('unassigned')` is false once
+`teamId` exists, so the repair could never read what it has to copy. The per-key `.read`
+on `members`, `attendance` and `leaves` is now
+`SELF($memberKey) && (BUCKET($teamId) || $teamId === 'unassigned')`. This only lets a user
+read their own claimed key in the `unassigned` bucket (their own data); it gives no list
+read of `unassigned` and nothing about anyone else. A test covers it (own copies readable,
+another unassigned user's copies and other teams still denied).
