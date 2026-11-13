@@ -209,7 +209,7 @@ function canManageTeams() { return isSuperUser(); }
 function canAssignRoles() { return isSuperUser(); }
 
 function denyAction(message) {
-    alert('âš ï¸ ' + message);
+    alert('⚠️ ' + message);
 }
 
 // ==========================================
@@ -357,7 +357,7 @@ class AttendanceData {
                     // Keep localStorage in sync
                     localStorage.setItem('attendance_tracker_data', JSON.stringify(this.data));
                 } else if (!this.firebaseReady) {
-                    // First time â€” push local data to Firebase
+                    // First time — push local data to Firebase
                     this.saveToFirebase();
                 }
                 this.firebaseReady = true;
@@ -374,7 +374,7 @@ class AttendanceData {
                     localStorage.setItem('attendance_team_members', JSON.stringify(TEAM_MEMBERS));
                     if (this.onDataLoaded) this.onDataLoaded();
                 } else {
-                    // No team members in Firebase â€” start fresh
+                    // No team members in Firebase — start fresh
                     TEAM_MEMBERS = [];
                     localStorage.setItem('attendance_team_members', JSON.stringify([]));
                 }
@@ -459,14 +459,14 @@ class AttendanceData {
             const indicator = document.getElementById('syncIndicator');
             database.ref('appData').set(sanitized).then(() => {
                 if (indicator) {
-                    indicator.textContent = 'ðŸŸ¢ Synced';
+                    indicator.textContent = '🟢 Synced';
                     indicator.className = 'sync-indicator connected';
                     indicator.style.fontSize = '12px';
                 }
             }).catch((error) => {
                 console.error('Firebase save failed:', error);
                 if (indicator) {
-                    indicator.textContent = 'ðŸ”´ ' + error.message;
+                    indicator.textContent = '🔴 ' + error.message;
                     indicator.className = 'sync-indicator disconnected';
                     indicator.style.fontSize = '12px';
                 }
@@ -815,7 +815,7 @@ class App {
         });
         ['toggleLoginPw', 'toggleRegPw'].forEach(id => {
             const el = document.getElementById(id);
-            if (el) el.textContent = 'ðŸ‘ï¸';
+            if (el) el.textContent = '👁️';
         });
 
         // Show only the login panel
@@ -823,7 +823,7 @@ class App {
         document.getElementById('registerForm').style.display = 'none';
         document.getElementById('forgotForm').style.display = 'none';
         const title = document.getElementById('authModalTitle');
-        if (title) title.textContent = 'ðŸ” Login';
+        if (title) title.textContent = '🔐 Login';
         document.getElementById('userModal').classList.add('active');
 
         // Permission-bearing UI off until the next login recomputes it
@@ -897,7 +897,7 @@ class App {
     }
 
     populateLoginDropdown() {
-        // No dropdown anymore â€” just clear the input
+        // No dropdown anymore — just clear the input
         const input = document.getElementById('loginUsername');
         if (input) input.value = '';
     }
@@ -1169,7 +1169,7 @@ class App {
         const user = getCurrentUser();
         const display = document.getElementById('currentUserDisplay');
         if (user) {
-            const badge = isAdmin() ? ' ðŸ‘‘' : '';
+            const badge = isAdmin() ? ' 👑' : '';
             const sanitizedName = user.replace(/\./g, '___DOT___');
             if (typeof database !== 'undefined') {
                 database.ref('users/' + sanitizedName + '/username').once('value').then((snapshot) => {
@@ -1179,9 +1179,9 @@ class App {
                         <span class="user-display-name">${uname}${badge}</span>
                         <span class="user-display-team" id="currentUserTeam"></span>
                         <span class="user-display-sep">|</span>
-                        <span class="user-display-btn" id="btnChangePassword" title="Change password">ðŸ”‘ Password</span>
+                        <span class="user-display-btn" id="btnChangePassword" title="Change password">🔑 Password</span>
                         <span class="user-display-sep">|</span>
-                        <span class="user-display-btn" id="btnLogout" title="Logout">â‡„ Logout</span>
+                        <span class="user-display-btn" id="btnLogout" title="Logout">⇄ Logout</span>
                     `;
                     this.bindUserDisplayEvents(display);
                     this.updateTeamLabels();
@@ -1191,9 +1191,9 @@ class App {
                     <span class="user-display-name">${user}${badge}</span>
                     <span class="user-display-team" id="currentUserTeam"></span>
                     <span class="user-display-sep">|</span>
-                    <span class="user-display-btn" id="btnChangePassword" title="Change password">ðŸ”‘ Password</span>
+                    <span class="user-display-btn" id="btnChangePassword" title="Change password">🔑 Password</span>
                     <span class="user-display-sep">|</span>
-                    <span class="user-display-btn" id="btnLogout" title="Logout">â‡„ Logout</span>
+                    <span class="user-display-btn" id="btnLogout" title="Logout">⇄ Logout</span>
                 `;
                 this.bindUserDisplayEvents(display);
                     this.updateTeamLabels();
@@ -1270,7 +1270,7 @@ class App {
         const storedHash = snapshot.val();
 
         if (oldHash !== storedHash) {
-            alert('âŒ Current password is incorrect.');
+            alert('❌ Current password is incorrect.');
             return;
         }
 
@@ -1282,13 +1282,13 @@ class App {
 
         const confirmPassword = prompt('Confirm new password:');
         if (newPassword !== confirmPassword) {
-            alert('âŒ Passwords do not match.');
+            alert('❌ Passwords do not match.');
             return;
         }
 
         const newHash = await hashPassword(newPassword);
         await database.ref('users/' + sanitizedName + '/passwordHash').set(newHash);
-        alert('âœ… Password changed successfully.');
+        alert('✅ Password changed successfully.');
     }
 
     // --- Team List ---
@@ -1353,11 +1353,11 @@ class App {
         const v = escapeHtml(viewing);
 
         if (isSelf) {
-            info.innerHTML = `<span class="viewing-member editing">ðŸ“ Editing: ${v}</span>`;
+            info.innerHTML = `<span class="viewing-member editing">📝 Editing: ${v}</span>`;
         } else if (canEdit(viewing)) {
-            info.innerHTML = `<span class="viewing-member editing">ðŸ“ Admin Editing: ${v}</span>`;
+            info.innerHTML = `<span class="viewing-member editing">📝 Admin Editing: ${v}</span>`;
         } else {
-            info.innerHTML = `<span class="view-only-tag">ðŸ‘ï¸ View Only</span> <span class="viewing-member">Viewing: ${v}</span>`;
+            info.innerHTML = `<span class="view-only-tag">👁️ View Only</span> <span class="viewing-member">Viewing: ${v}</span>`;
         }
     }
 
@@ -1371,9 +1371,9 @@ class App {
         const statusColor = percentage >= REQUIRED_PERCENTAGE ? 'green' : (percentage >= 40 ? 'orange' : 'red');
 
         const wfhMessages = [
-            "Enjoy your work-from-home daysâ€”they're a blessing for both your family and your health. â¤ï¸ðŸ¡ðŸ’»",
-            "Work from home while it lasts. More family time, better health, and a happier life. ðŸ¡â¤ï¸",
-            "Enjoy your work-from-home timeâ€”it brings you closer to your family and gives you a better work-life balance. ðŸ¡â¤ï¸"
+            "Enjoy your work-from-home days—they're a blessing for both your family and your health. ❤️🏡💻",
+            "Work from home while it lasts. More family time, better health, and a happier life. 🏡❤️",
+            "Enjoy your work-from-home time—it brings you closer to your family and gives you a better work-life balance. 🏡❤️"
         ];
         const motivationMsg = percentage >= REQUIRED_PERCENTAGE
             ? `<div class="motivation-msg">${wfhMessages[Math.floor(Math.random() * wfhMessages.length)]}</div>`
@@ -1439,32 +1439,32 @@ class App {
 
             if (isWeekend) {
                 classes.push('weekend');
-                statusIcon = 'ðŸ”’';
+                statusIcon = '🔒';
                 title = 'Weekend';
             } else if (isHoliday) {
                 classes.push('holiday');
-                statusIcon = 'ðŸ–ï¸';
+                statusIcon = '🏖️';
                 title = this.data.getHolidayName(dateStr);
             } else if (leaveType) {
                 if (leaveType === 'leave') {
                     classes.push('on-leave');
-                    statusIcon = 'ðŸš«';
+                    statusIcon = '🚫';
                     title = 'Leave (not counted as working day)';
                 } else if (leaveType === 'wfh') {
                     classes.push('wfh');
-                    statusIcon = 'ðŸ ';
+                    statusIcon = '🏠';
                     title = 'Work From Home';
                 } else if (leaveType === 'wfh-email') {
                     classes.push('wfh-email');
-                    statusIcon = 'ðŸ“§';
+                    statusIcon = '📧';
                     title = 'WFH Email (excluded from total days)';
                 } else if (leaveType === 'exception') {
                     classes.push('exception');
-                    statusIcon = 'âš¡';
+                    statusIcon = '⚡';
                     title = 'Exception (not counted as working day)';
                 } else if (leaveType === 'planned') {
                     classes.push('planned');
-                    statusIcon = 'ðŸ“‹';
+                    statusIcon = '📋';
                     title = 'Planning to Come';
                 }
                 // Mark future days with leave type as future too
@@ -1472,14 +1472,14 @@ class App {
             } else if (isToday) {
                 if (isPresent) {
                     classes.push('present');
-                    statusIcon = 'âœ…';
+                    statusIcon = '✅';
                 }
             } else if (isFuture) {
                 classes.push('future');
                 if (canPlan) classes.push('plannable');
             } else if (isPresent) {
                 classes.push('present');
-                statusIcon = 'âœ…';
+                statusIcon = '✅';
             }
 
             if (isToday) classes.push('today');
@@ -1508,13 +1508,13 @@ class App {
 
         menu.innerHTML = `
             <div class="menu-title">Mark as:</div>
-            <button class="menu-item ${isPresent && !leaveType ? 'active' : ''}" data-action="present">âœ… Present</button>
-            <button class="menu-item ${leaveType === 'leave' ? 'active' : ''}" data-action="leave">ðŸš« Leave</button>
-            <button class="menu-item ${leaveType === 'wfh' ? 'active' : ''}" data-action="wfh">ðŸ  Work From Home</button>
-            <button class="menu-item ${leaveType === 'wfh-email' ? 'active' : ''}" data-action="wfh-email">ðŸ“§ WFH Email</button>
-            <button class="menu-item ${leaveType === 'exception' ? 'active' : ''}" data-action="exception">âš¡ Exception</button>
+            <button class="menu-item ${isPresent && !leaveType ? 'active' : ''}" data-action="present">✅ Present</button>
+            <button class="menu-item ${leaveType === 'leave' ? 'active' : ''}" data-action="leave">🚫 Leave</button>
+            <button class="menu-item ${leaveType === 'wfh' ? 'active' : ''}" data-action="wfh">🏠 Work From Home</button>
+            <button class="menu-item ${leaveType === 'wfh-email' ? 'active' : ''}" data-action="wfh-email">📧 WFH Email</button>
+            <button class="menu-item ${leaveType === 'exception' ? 'active' : ''}" data-action="exception">⚡ Exception</button>
             <hr>
-            <button class="menu-item" data-action="clear">âŒ Clear</button>
+            <button class="menu-item" data-action="clear">❌ Clear</button>
         `;
 
         // Position menu near the target element
@@ -1572,11 +1572,11 @@ class App {
 
         menu.innerHTML = `
             <div class="menu-title">Plan for this day:</div>
-            <button class="menu-item ${leaveType === 'planned' ? 'active' : ''}" data-action="planned">ðŸ“‹ Planning to Come</button>
-            <button class="menu-item ${leaveType === 'leave' ? 'active' : ''}" data-action="leave">ðŸš« Leave</button>
-            <button class="menu-item ${leaveType === 'exception' ? 'active' : ''}" data-action="exception">âš¡ Exception</button>
+            <button class="menu-item ${leaveType === 'planned' ? 'active' : ''}" data-action="planned">📋 Planning to Come</button>
+            <button class="menu-item ${leaveType === 'leave' ? 'active' : ''}" data-action="leave">🚫 Leave</button>
+            <button class="menu-item ${leaveType === 'exception' ? 'active' : ''}" data-action="exception">⚡ Exception</button>
             <hr>
-            <button class="menu-item" data-action="clear">âŒ Clear</button>
+            <button class="menu-item" data-action="clear">❌ Clear</button>
         `;
 
         const rect = targetEl.getBoundingClientRect();
@@ -1629,11 +1629,11 @@ class App {
             const percentage = this.data.getAttendancePercentage(member, this.currentYear, this.currentMonth);
             let statusClass, statusText, statusOrder;
             if (percentage >= REQUIRED_PERCENTAGE) {
-                statusClass = 'compliant'; statusText = 'âœ“ Compliant'; statusOrder = 1;
+                statusClass = 'compliant'; statusText = '✓ Compliant'; statusOrder = 1;
             } else if (percentage >= 40) {
-                statusClass = 'on-track'; statusText = 'âš  At Risk'; statusOrder = 2;
+                statusClass = 'on-track'; statusText = '⚠ At Risk'; statusOrder = 2;
             } else {
-                statusClass = 'non-compliant'; statusText = 'âœ— Non-Compliant'; statusOrder = 3;
+                statusClass = 'non-compliant'; statusText = '✗ Non-Compliant'; statusOrder = 3;
             }
             return { name: member, attended, workingDays, percentage, statusClass, statusText, statusOrder };
         });
@@ -1655,9 +1655,9 @@ class App {
         // Render sort arrows in header
         const getArrow = (col) => {
             if (this.sortColumn === col) {
-                return this.sortDirection === 'asc' ? ' â–²' : ' â–¼';
+                return this.sortDirection === 'asc' ? ' ▲' : ' ▼';
             }
-            return ' â‡…';
+            return ' ⇅';
         };
 
         document.getElementById('summaryTable').querySelector('thead').innerHTML = `
@@ -1703,7 +1703,7 @@ class App {
             const highlightClass = isCurrentMonth ? 'holiday-current-month' : '';
             return `<div class="holiday-item ${highlightClass}">
                 <div class="holiday-info">
-                    <span class="holiday-date">ðŸ“… ${dateDisplay}</span>
+                    <span class="holiday-date">📅 ${dateDisplay}</span>
                     <span class="holiday-name">${h.name}</span>
                     ${isCurrentMonth ? '<span class="holiday-badge">This Month</span>' : ''}
                 </div>
@@ -1769,7 +1769,7 @@ class App {
                         `<option value="${escapeHtml(id)}"${id === teamId ? ' selected' : ''}>${escapeHtml(TEAMS[id].name)}</option>`))
                     .join('');
                 const adminCtl = isSuperAdmin
-                    ? `<span class="super-admin-badge">ðŸ‘‘ Super Admin</span>`
+                    ? `<span class="super-admin-badge">👑 Super Admin</span>`
                     : `<label class="role-check"><input type="checkbox" class="chk-admin" data-member="${m}"${memberIsAdmin ? ' checked' : ''}> Admin</label>`;
                 roleControls = `
                     <select class="member-team-select" data-member="${m}" title="Team">${opts}</select>
@@ -1783,14 +1783,14 @@ class App {
 
             return `<div class="team-member-item" draggable="true" data-index="${i}" data-member="${m}">
                 <div class="team-member-info">
-                    <span class="drag-handle" title="Drag to reorder">â˜°</span>
+                    <span class="drag-handle" title="Drag to reorder">☰</span>
                     <span class="avatar" style="background:${AVATAR_COLORS[i % AVATAR_COLORS.length]}">${escapeHtml(initials)}</span>
                     <span class="team-member-name">${m}</span>
                     ${roleControls}
                 </div>
                 <div class="team-member-actions">
-                    ${canAct ? `<button class="btn-edit" data-member="${m}" title="Edit name">âœï¸</button>` : ''}
-                    ${canAct && !isSelf ? `<button class="btn-reset-pw" data-member="${m}" title="Reset password">ðŸ”‘</button>` : ''}
+                    ${canAct ? `<button class="btn-edit" data-member="${m}" title="Edit name">✏️</button>` : ''}
+                    ${canAct && !isSelf ? `<button class="btn-reset-pw" data-member="${m}" title="Reset password">🔑</button>` : ''}
                     ${canAct && !isSelf && !isSuperAdmin ? `<button class="btn-delete" data-member="${m}" title="Remove">Remove</button>` : ''}
                 </div>
             </div>`;
@@ -1824,15 +1824,15 @@ class App {
                 const section = document.getElementById('terminatedSection');
                 if (section && terminatedUsers.length > 0) {
                     section.innerHTML = `
-                        <h4 class="terminated-header">ðŸš« Terminated Members (${terminatedUsers.length})</h4>
+                        <h4 class="terminated-header">🚫 Terminated Members (${terminatedUsers.length})</h4>
                         ${terminatedUsers.map(name => `
                             <div class="team-member-item terminated-item">
                                 <div class="team-member-info">
-                                    <span class="avatar" style="background:#666">âœ—</span>
+                                    <span class="avatar" style="background:#666">✗</span>
                                     <span class="team-member-name terminated-name">${escapeHtml(name)}</span>
                                 </div>
                                 <div class="team-member-actions">
-                                    <button class="btn-restore" data-member="${escapeHtml(name)}" title="Restore member">â™»ï¸ Restore</button>
+                                    <button class="btn-restore" data-member="${escapeHtml(name)}" title="Restore member">♻️ Restore</button>
                                 </div>
                             </div>
                         `).join('')}
@@ -1908,7 +1908,7 @@ class App {
 
     resetTeamToDefault() {
         if (!isSuperUser()) {
-            alert('âš ï¸ Only the Superuser can reset the team list.');
+            alert('⚠️ Only the Superuser can reset the team list.');
             return;
         }
         if (!confirm('Reset team list to the default members?\n\nThis will replace the current list. Attendance data is preserved.')) return;
@@ -1928,7 +1928,7 @@ class App {
         if (!canAssignRoles()) { denyAction('Only the Superuser can assign roles.'); return false; }
         if (!member || !TEAM_MEMBERS.includes(member)) return false;
         if (member === SUPER_ADMIN) {
-            if (!makeAdmin) alert('âš ï¸ Cannot remove the super admin.');
+            if (!makeAdmin) alert('⚠️ Cannot remove the super admin.');
             return false;
         }
         const has = ADMIN_MEMBERS.includes(member);
@@ -1967,9 +1967,9 @@ class App {
         if (typeof database === 'undefined') return false;
         name = (name || '').trim();
         if (!name) return false;
-        if (name.length > 60) { alert('âš ï¸ Team name must be 60 characters or fewer.'); return false; }
+        if (name.length > 60) { alert('⚠️ Team name must be 60 characters or fewer.'); return false; }
         if (Object.values(TEAMS).some(t => t && t.name && t.name.toLowerCase() === name.toLowerCase())) {
-            alert('âš ï¸ A team with this name already exists.');
+            alert('⚠️ A team with this name already exists.');
             return false;
         }
         const id = database.ref('teams').push().key;
@@ -1986,9 +1986,9 @@ class App {
         const input = prompt(`Rename team "${team.name}":`, team.name);
         const name = (input || '').trim();
         if (!name || name === team.name) return false;
-        if (name.length > 60) { alert('âš ï¸ Team name must be 60 characters or fewer.'); return false; }
+        if (name.length > 60) { alert('⚠️ Team name must be 60 characters or fewer.'); return false; }
         if (Object.keys(TEAMS).some(id => id !== teamId && TEAMS[id].name && TEAMS[id].name.toLowerCase() === name.toLowerCase())) {
-            alert('âš ï¸ A team with this name already exists.');
+            alert('⚠️ A team with this name already exists.');
             return false;
         }
         database.ref('teams/' + teamId + '/name').set(name);
@@ -2040,7 +2040,7 @@ class App {
                 <span class="team-admin-name">${escapeHtml(TEAMS[id].name)}</span>
                 <span class="team-tag">${count} member${count === 1 ? '' : 's'}</span>
                 <span class="team-member-actions">
-                    <button class="btn-edit btn-team-rename" data-team="${escapeHtml(id)}" title="Rename team">âœï¸</button>
+                    <button class="btn-edit btn-team-rename" data-team="${escapeHtml(id)}" title="Rename team">✏️</button>
                     <button class="btn-delete btn-team-delete" data-team="${escapeHtml(id)}" title="Delete team">Delete</button>
                 </span>
             </div>`;
@@ -2058,7 +2058,7 @@ class App {
     updateThemeButton() {
         const btn = document.getElementById('btnThemeToggle');
         const isLight = document.body.classList.contains('light-theme');
-        btn.textContent = isLight ? 'ðŸŒ™ Dark' : 'â˜€ï¸ Light';
+        btn.textContent = isLight ? '🌙 Dark' : '☀️ Light';
     }
 
     loadTheme() {
@@ -2086,13 +2086,13 @@ class App {
     // Superuser: may pass a teamId; omitted means Unassigned.
     async addMember(name, teamId) {
         if (!isAdmin()) {
-            alert('âš ï¸ Only admins can add team members.');
+            alert('⚠️ Only admins can add team members.');
             return;
         }
         if (isTeamAdmin()) {
             teamId = getMyTeamId();
             if (!teamId) {
-                alert('âš ï¸ Ask the Superuser to assign you to a team first.');
+                alert('⚠️ Ask the Superuser to assign you to a team first.');
                 return;
             }
         } else {
@@ -2101,11 +2101,11 @@ class App {
         if (!name || name.trim() === '') return;
         name = name.trim();
         if (TEAM_MEMBERS.includes(name)) {
-            alert('âš ï¸ This member already exists!');
+            alert('⚠️ This member already exists!');
             return;
         }
         if (name === SUPER_ADMIN) {
-            alert('âš ï¸ This member already exists!');
+            alert('⚠️ This member already exists!');
             return;
         }
 
@@ -2118,7 +2118,7 @@ class App {
                 // A team Admin may not claim a person who already belongs to another team
                 const existingTeam = (userData && userData.teamId) || getMemberTeamId(name);
                 if (isTeamAdmin() && existingTeam && existingTeam !== teamId) {
-                    alert('âš ï¸ This person belongs to another team. Ask the Superuser to move them.');
+                    alert('⚠️ This person belongs to another team. Ask the Superuser to move them.');
                     return;
                 }
                 if (userData && userData.terminated === true) {
@@ -2129,10 +2129,10 @@ class App {
                 }
             }
         } catch (e) {
-            // Ignore Firebase errors â€” just add locally
+            // Ignore Firebase errors — just add locally
         }
 
-        // Add to team members â€” they can register themselves later
+        // Add to team members — they can register themselves later
         TEAM_MEMBERS.push(name);
         saveTeamMembers(TEAM_MEMBERS);
         if (teamId) {
@@ -2154,18 +2154,18 @@ class App {
 
     editMember(oldName) {
         if (!isAdmin()) {
-            alert('âš ï¸ Only admins can edit team member names.');
+            alert('⚠️ Only admins can edit team member names.');
             return;
         }
         if (!canAdminMember(oldName)) {
-            alert('âš ï¸ You can only edit members of your own team.');
+            alert('⚠️ You can only edit members of your own team.');
             return;
         }
         const newName = prompt(`Edit name for "${oldName}":`, oldName);
         if (!newName || newName.trim() === '' || newName.trim() === oldName) return;
         const trimmed = newName.trim();
         if (TEAM_MEMBERS.includes(trimmed)) {
-            alert('âš ï¸ A member with this name already exists!');
+            alert('⚠️ A member with this name already exists!');
             return;
         }
         const index = TEAM_MEMBERS.indexOf(oldName);
@@ -2188,19 +2188,19 @@ class App {
 
     removeMember(name) {
         if (!isAdmin()) {
-            alert('âš ï¸ Only admins can remove team members.');
+            alert('⚠️ Only admins can remove team members.');
             return;
         }
         if (name === SUPER_ADMIN) {
-            alert('âš ï¸ Cannot remove the super admin.');
+            alert('⚠️ Cannot remove the super admin.');
             return;
         }
         if (!canAdminMember(name)) {
-            alert('âš ï¸ You can only remove members of your own team.');
+            alert('⚠️ You can only remove members of your own team.');
             return;
         }
         if (name === getCurrentUser()) {
-            alert('âš ï¸ You cannot remove yourself.');
+            alert('⚠️ You cannot remove yourself.');
             return;
         }
         if (!confirm(`Are you sure you want to remove "${name}" from the team?\n\nThey will be marked as terminated but can be restored later.`)) return;
@@ -2283,7 +2283,7 @@ class App {
 
         const status = document.getElementById('syncStatus');
         status.className = 'sync-status success';
-        status.textContent = 'âœ… File downloaded! Upload it to your Teams channel â†’ Files tab to share with the team.';
+        status.textContent = '✅ File downloaded! Upload it to your Teams channel → Files tab to share with the team.';
     }
 
     syncImport() {
@@ -2299,12 +2299,12 @@ class App {
                     const status = document.getElementById('syncStatus');
                     if (this.data.importJSON(event.target.result)) {
                         status.className = 'sync-status success';
-                        status.textContent = 'âœ… Data synced successfully! All attendance records are now up to date.';
+                        status.textContent = '✅ Data synced successfully! All attendance records are now up to date.';
                         this.renderCalendar();
                         this.renderTeamList();
                     } else {
                         status.className = 'sync-status error';
-                        status.textContent = 'âŒ Invalid file. Please use a valid attendance JSON file from your team.';
+                        status.textContent = '❌ Invalid file. Please use a valid attendance JSON file from your team.';
                     }
                 };
                 reader.readAsText(file);
@@ -2358,14 +2358,14 @@ class App {
 
         const getArrow = (col) => {
             if (this.sortColumn === col) {
-                return this.sortDirection === 'asc' ? ' â–²' : ' â–¼';
+                return this.sortDirection === 'asc' ? ' ▲' : ' ▼';
             }
-            return ' â‡…';
+            return ' ⇅';
         };
 
         let html = `
             <div class="report-header">
-                <h1>ðŸ“Š Monthly Attendance Report</h1>
+                <h1>📊 Monthly Attendance Report</h1>
                 <div class="report-subtitle">${monthNames[this.currentMonth]} ${this.currentYear}</div>
                 <div class="report-date">Generated on ${reportDate}</div>
             </div>
@@ -2381,7 +2381,7 @@ class App {
                 </div>
                 <div class="report-kpi">
                     <span class="kpi-value green">${compliantCount}</span>
-                    <span class="kpi-label">Compliant (â‰¥60%)</span>
+                    <span class="kpi-label">Compliant (≥60%)</span>
                 </div>
                 <div class="report-kpi">
                     <span class="kpi-value ${avgAttendance >= 60 ? 'green' : 'orange'}">${avgAttendance}%</span>
@@ -2407,13 +2407,13 @@ class App {
             let badgeClass, badgeText;
             if (m.percentage >= REQUIRED_PERCENTAGE) {
                 badgeClass = 'badge-green';
-                badgeText = 'âœ“ Compliant';
+                badgeText = '✓ Compliant';
             } else if (m.percentage >= 40) {
                 badgeClass = 'badge-orange';
-                badgeText = 'âš  At Risk';
+                badgeText = '⚠ At Risk';
             } else {
                 badgeClass = 'badge-red';
-                badgeText = 'âœ— Non-Compliant';
+                badgeText = '✗ Non-Compliant';
             }
 
             const barColor = m.percentage >= REQUIRED_PERCENTAGE ? 'green' : (m.percentage >= 40 ? 'orange' : 'red');
@@ -2483,7 +2483,7 @@ class App {
 <!-- Header -->
 <tr>
 <td style="background:#0052CC;padding:24px 32px;text-align:center;">
-<h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:600;">ðŸ“Š Monthly Attendance Report</h1>
+<h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:600;">📊 Monthly Attendance Report</h1>
 <p style="margin:4px 0 0;color:#a8c8ff;font-size:14px;">${monthNames[this.currentMonth]} ${this.currentYear}</p>
 <p style="margin:4px 0 0;color:#7fb3ff;font-size:12px;">Generated on ${reportDate}</p>
 </td>
@@ -2506,7 +2506,7 @@ class App {
 <td width="4%"></td>
 <td width="25%" style="text-align:center;padding:12px;background:#f8f9fa;border-radius:8px;">
 <div style="font-size:28px;font-weight:700;color:#2ea043;">${compliantCount}</div>
-<div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:0.5px;margin-top:4px;">Compliant (â‰¥60%)</div>
+<div style="font-size:11px;color:#666;text-transform:uppercase;letter-spacing:0.5px;margin-top:4px;">Compliant (≥60%)</div>
 </td>
 <td width="4%"></td>
 <td width="25%" style="text-align:center;padding:12px;background:#f8f9fa;border-radius:8px;">
@@ -2536,11 +2536,11 @@ class App {
         memberData.forEach((m, i) => {
             let badgeBg, badgeColor, badgeText;
             if (m.percentage >= REQUIRED_PERCENTAGE) {
-                badgeBg = '#d4edda'; badgeColor = '#155724'; badgeText = 'âœ“ Compliant';
+                badgeBg = '#d4edda'; badgeColor = '#155724'; badgeText = '✓ Compliant';
             } else if (m.percentage >= 40) {
-                badgeBg = '#fff3cd'; badgeColor = '#856404'; badgeText = 'âš  At Risk';
+                badgeBg = '#fff3cd'; badgeColor = '#856404'; badgeText = '⚠ At Risk';
             } else {
-                badgeBg = '#f8d7da'; badgeColor = '#721c24'; badgeText = 'âœ— Non-Compliant';
+                badgeBg = '#f8d7da'; badgeColor = '#721c24'; badgeText = '✗ Non-Compliant';
             }
 
             const barColor = m.percentage >= REQUIRED_PERCENTAGE ? '#2ea043' : (m.percentage >= 40 ? '#d29922' : '#da3633');
@@ -2610,7 +2610,7 @@ ${m.percentage}%
             if (!localStorage.getItem(reminderKey)) {
                 setTimeout(() => {
                     if (!getCurrentUser()) return;
-                    if (confirm('ðŸ“§ Reminder: Today is a report submission day (20th or last day of month).\n\nWould you like to generate the attendance report now?')) {
+                    if (confirm('📧 Reminder: Today is a report submission day (20th or last day of month).\n\nWould you like to generate the attendance report now?')) {
                         this.showEmailModal();
                     }
                     localStorage.setItem(reminderKey, 'shown');
@@ -2631,14 +2631,14 @@ ${m.percentage}%
         document.getElementById('toggleLoginPw').addEventListener('click', () => {
             const input = document.getElementById('loginPassword');
             const toggle = document.getElementById('toggleLoginPw');
-            if (input.type === 'password') { input.type = 'text'; toggle.textContent = 'ðŸ™ˆ'; }
-            else { input.type = 'password'; toggle.textContent = 'ðŸ‘ï¸'; }
+            if (input.type === 'password') { input.type = 'text'; toggle.textContent = '🙈'; }
+            else { input.type = 'password'; toggle.textContent = '👁️'; }
         });
         document.getElementById('toggleRegPw').addEventListener('click', () => {
             const input = document.getElementById('registerPassword');
             const toggle = document.getElementById('toggleRegPw');
-            if (input.type === 'password') { input.type = 'text'; toggle.textContent = 'ðŸ™ˆ'; }
-            else { input.type = 'password'; toggle.textContent = 'ðŸ‘ï¸'; }
+            if (input.type === 'password') { input.type = 'text'; toggle.textContent = '🙈'; }
+            else { input.type = 'password'; toggle.textContent = '👁️'; }
         });
 
         document.getElementById('btnRegister').addEventListener('click', () => this.handleRegister());
@@ -2651,7 +2651,7 @@ ${m.percentage}%
             document.getElementById('loginForm').style.display = 'none';
             document.getElementById('registerForm').style.display = 'block';
             document.getElementById('forgotForm').style.display = 'none';
-            document.getElementById('authModalTitle').textContent = 'ðŸ“ Register';
+            document.getElementById('authModalTitle').textContent = '📝 Register';
             this.loadTeamOptions();
         });
 
@@ -2660,7 +2660,7 @@ ${m.percentage}%
             document.getElementById('loginForm').style.display = 'block';
             document.getElementById('registerForm').style.display = 'none';
             document.getElementById('forgotForm').style.display = 'none';
-            document.getElementById('authModalTitle').textContent = 'ðŸ” Login';
+            document.getElementById('authModalTitle').textContent = '🔐 Login';
         });
 
         document.getElementById('showForgotPassword').addEventListener('click', (e) => {
@@ -2668,14 +2668,14 @@ ${m.percentage}%
             document.getElementById('loginForm').style.display = 'none';
             document.getElementById('registerForm').style.display = 'none';
             document.getElementById('forgotForm').style.display = 'block';
-            document.getElementById('authModalTitle').textContent = 'ðŸ”‘ Forgot Password';
+            document.getElementById('authModalTitle').textContent = '🔑 Forgot Password';
         });
 
         document.getElementById('btnBackToLogin').addEventListener('click', () => {
             document.getElementById('loginForm').style.display = 'block';
             document.getElementById('registerForm').style.display = 'none';
             document.getElementById('forgotForm').style.display = 'none';
-            document.getElementById('authModalTitle').textContent = 'ðŸ” Login';
+            document.getElementById('authModalTitle').textContent = '🔐 Login';
         });
 
         // Logout in another tab (or cleared storage) locks this tab too
@@ -2958,11 +2958,11 @@ ${m.percentage}%
             const blob = new Blob([emailHtml], { type: 'text/html' });
             const clipboardItem = new ClipboardItem({ 'text/html': blob });
             navigator.clipboard.write([clipboardItem]).then(() => {
-                alert('âœ… Dashboard report copied! Paste directly into Outlook or Teams â€” it will look like a visual dashboard.');
+                alert('✅ Dashboard report copied! Paste directly into Outlook or Teams — it will look like a visual dashboard.');
             }).catch(() => {
                 // Fallback: copy as plain HTML source
                 navigator.clipboard.writeText(emailHtml).then(() => {
-                    alert('âœ… HTML report copied to clipboard! Paste into an email editor that supports HTML.');
+                    alert('✅ HTML report copied to clipboard! Paste into an email editor that supports HTML.');
                 });
             });
         });
