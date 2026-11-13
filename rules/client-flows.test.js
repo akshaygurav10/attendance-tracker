@@ -189,9 +189,12 @@ describe('client payloads against the rules', () => {
         assert.strictEqual(await adminRead('teamData/tA/members/EmpA/terminated'), false);
     });
 
-    test('Admin terminating another Admin also clears isAdmin', async () => {
+    test('only the Superuser can terminate an Admin, and that also clears isAdmin', async () => {
         await env.withSecurityRulesDisabled(ctx => ctx.database().ref('usersV2/empA/isAdmin').set(true));
-        await assertSucceeds(dbAs('admA').ref().update(D.terminatePayload({ teamId: 'tA', key: 'EmpA', uid: 'empA' }, { isAdmin: true }, ISO)));
+        const payload = D.terminatePayload({ teamId: 'tA', key: 'EmpA', uid: 'empA' }, { isAdmin: true }, ISO);
+        await assertFails(dbAs('admA').ref().update(payload));
+        assert.strictEqual(await adminRead('usersV2/empA/isAdmin'), true);
+        await assertSucceeds(dbAs('su').ref().update(payload));
         assert.strictEqual(await adminRead('usersV2/empA/isAdmin'), false);
     });
 

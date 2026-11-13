@@ -40,6 +40,13 @@ test('generated database.rules.json is valid, macro free and in sync with the so
     }
 });
 
+test('TGT and ORD expand with no macro name left', () => {
+    const out = expandValue('ORD($memberKey) && TGT($memberKey).child(\'x\').exists()', macros);
+    assert.ok(!/\b(TGT|ORD|ME|SI)\b/.test(out), out);
+    assert.ok(out.includes("memberOwners"), out);
+    assert.ok(out.includes("isSuperAdmin"), out);
+});
+
 test('SELFMOVE is gone and teams cannot be named unassigned', () => {
     const text = fs.readFileSync(path.join(__dirname, '..', 'database.rules.json'), 'utf8');
     assert.ok(!text.includes('SELFMOVE'));

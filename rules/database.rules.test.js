@@ -35,6 +35,8 @@ function profile(name, extra) {
 const USERS = {
     su: profile('Super', { isSuperAdmin: true, isAdmin: true, teamId: 'tA' }),
     admA: profile('AdminA', { isAdmin: true, teamId: 'tA' }),
+    admA2: profile('AdminA2', { isAdmin: true, teamId: 'tA' }),
+    bothA: profile('BothA', { isAdmin: true, isManager: true, teamId: 'tA' }),
     admB: profile('AdminB', { isAdmin: true, teamId: 'tB' }),
     admNT: profile('AdminNT', { isAdmin: true }),
     mgrA: profile('MgrA', { isManager: true, teamId: 'tA' }),
@@ -73,7 +75,9 @@ function seedData(settings) {
                     EmpA2: member('EmpA2', 4, 'empA2'),
                     EmpA4: member('EmpA4', 5),
                     EmpA5: member('EmpA5', 6),
-                    TermA: member('TermA', 7, 'termA', { terminated: true })
+                    TermA: member('TermA', 7, 'termA', { terminated: true }),
+                    AdminA2: member('AdminA2', 8, 'admA2'),
+                    BothA: member('BothA', 9, 'bothA')
                 },
                 attendance: {
                     EmpA: { '2024-01-02': true },
@@ -527,5 +531,154 @@ describe('lookup-limit worst cases (acceptance gate, design 2.1)', () => {
             'teamData/tA/leaves/EmpA': null,
             'usersV2/empA/teamId': 'tB'
         }));
+    });
+});
+
+// Every protected member action, as [label, fn(actor)] pairs for one target.
+// uid is null for an unregistered roster entry (profile actions are skipped).
+function memberActions(team, key, uid) {
+    const m = 'teamData/' + team + '/members/' + key;
+    const list = [
+        ['roster terminate', (a) => write(a, m + '/terminated', true)],
+        ['roster rename', (a) => write(a, m + '/name', 'Renamed')],
+        ['roster order', (a) => write(a, m + '/order', 42)],
+        ['roster delete', (a) => write(a, m, null)],
+        ['attendance write', (a) => write(a, 'teamData/' + team + '/attendance/' + key + '/2024-06-03', true)],
+        ['leaves write', (a) => write(a, 'teamData/' + team + '/leaves/' + key + '/2024-06-04', 'leave')]
+    ];
+    if (uid) {
+        const u = 'usersV2/' + uid;
+        list.push(
+            ['terminate (single path)', (a) => write(a, u + '/terminated', true)],
+            ['terminate (multi-path payload)', (a) => upd(a, {
+                [m + '/terminated']: true,
+                [u + '/terminated']: true,
+                [u + '/terminatedAt']: ISO,
+                [u + '/isAdmin']: false
+            })],
+            ['restore', (a) => upd(a, {
+                [m + '/terminated']: false,
+                [u + '/terminated']: false,
+                [u + '/terminatedAt']: null,
+                [u + '/mustResetPassword']: true
+            })],
+            ['demote', (a) => write(a, u + '/isAdmin', false)],
+            ['profile rename', (a) => write(a, u + '/name', 'Renamed')],
+            ['mustResetPassword', (a) => write(a, u + '/mustResetPassword', true)],
+            ['passwordResetRequests', (a) => write(a, 'passwordResetRequests/' + uid, { requestedBy: a, requestedAt: ISO })]
+        );
+    }
+    return list;
+}
+
+describe('team Admin cannot manage privileged members (FEAT-001)', () => {
+    const PRIVILEGED = [['admA2', 'AdminA2'], ['mgrA', 'MgrA'], ['bothA', 'BothA'], ['su', 'Super']];
+    for (const [uid, key] of PRIVILEGED) {
+        for (const [label, fn] of memberActions('tA', key, uid)) {
+            test('admA ' + label + ' on ' + uid + ' fails', async () => {
+                await assertFails(fn('admA'));
+            });
+        }
+    }
+    for (const [uid, key] of [['empA', 'EmpA'], [null, 'EmpA4']]) {
+        for (const [label, fn] of memberActions('tA', key, uid)) {
+            test('admA ' + label + ' on ordinary ' + key + ' succeeds', async () => {
+                await assertSucceeds(fn('admA'));
+            });
+        }
+    }
+    for (const [uid, key] of [['empB', 'EmpB'], ['admB', 'AdminB']]) {
+        for (const [label, fn] of memberActions('tB', key, uid)) {
+            test('admA ' + label + ' on other-team ' + uid + ' fails', async () => {
+                await assertFails(fn('admA'));
+            });
+        }
+    }
+    for (const [uid, key] of [['admA2', 'AdminA2'], ['mgrA', 'MgrA'], ['bothA', 'BothA']]) {
+        for (const [label, fn] of memberActions('tA', key, uid)) {
+            test('Superuser ' + label + ' on ' + uid + ' succeeds', async () => {
+                await assertSucceeds(fn('su'));
+            });
+        }
+    }
+});
+
+describe('Superuser self-protection (FEAT-001)', () => {
+    test('Superuser cannot terminate, demote or rename own profile', async () => {
+        await assertFails(write('su', 'usersV2/su/terminated', true));
+        await assertFails(write('su', 'usersV2/su/terminatedAt', ISO));
+        await assertFails(write('su', 'usersV2/su/isAdmin', false));
+        await assertFails(write('su', 'usersV2/su/name', 'Renamed'));
+        await assertFails(write('su', 'usersV2/su', null));
+    });
+    test('Superuser cannot write own isSuperAdmin false or null', async () => {
+        await assertFails(write('su', 'usersV2/su/isSuperAdmin', false));
+        await assertFails(write('su', 'usersV2/su/isSuperAdmin', null));
+    });
+    test('Superuser cannot delete, terminate or rename own roster entry', async () => {
+        await assertFails(write('su', 'teamData/tA/members/Super', null));
+        await assertFails(write('su', 'teamData/tA/members/Super/terminated', true));
+        await assertFails(write('su', 'teamData/tA/members/Super/name', 'Renamed'));
+        await assertFails(write('su', 'teamData/tA/members/Super', { name: 'Super', order: 0, uid: 'su', terminated: true }));
+    });
+    test('Superuser terminate payload for self fails as one update', async () => {
+        await assertFails(upd('su', {
+            'teamData/tA/members/Super/terminated': true,
+            'usersV2/su/terminated': true,
+            'usersV2/su/terminatedAt': ISO,
+            'usersV2/su/isAdmin': false
+        }));
+    });
+    test('Superuser can still reorder own roster entry and manage others', async () => {
+        await assertSucceeds(write('su', 'teamData/tA/members/Super/order', 3));
+        await assertSucceeds(write('su', 'usersV2/empA/terminated', true));
+        await assertSucceeds(write('su', 'usersV2/admA/isAdmin', false));
+        await assertSucceeds(write('su', 'teamData/tA/members/EmpA', null));
+    });
+});
+
+describe('Superuser-only writes denied to signed-in non-Superusers (FEAT-001)', () => {
+    for (const actor of ['empA', 'mgrA', 'admA']) {
+        test(actor + ': own role flags and team assignment', async () => {
+            await assertFails(write(actor, 'usersV2/' + actor + '/isSuperAdmin', true));
+            await assertFails(write(actor, 'usersV2/' + actor + '/isAdmin', true));
+            await assertFails(write(actor, 'usersV2/' + actor + '/isManager', true));
+            await assertFails(write(actor, 'usersV2/' + actor + '/teamId', 'tB'));
+            await assertFails(write(actor, 'usersV2/empA3/teamId', 'tB'));
+            await assertFails(write(actor, 'usersV2/empA3/isAdmin', true));
+            await assertFails(write(actor, 'usersV2/empA3/isManager', true));
+        });
+        test(actor + ': teams, teamNames, settings, holidays', async () => {
+            await assertFails(write(actor, 'teams/tZ', { id: 'tZ', name: 'Z' }));
+            await assertFails(write(actor, 'teams/tA/name', 'Hijacked'));
+            await assertFails(write(actor, 'teamNames/tZ', 'Z'));
+            await assertFails(write(actor, 'teamNames/tA', 'Hijacked'));
+            await assertFails(write(actor, 'settings/everyoneSeesAll', true));
+            await assertFails(write(actor, 'settings/adminCanEditHolidays', true));
+            await assertFails(write(actor, 'holidays/2024-11-01', { name: 'X' }));
+            await assertFails(write(actor, 'holidays', null));
+        });
+        test(actor + ': other teams\' teamData, others\' profiles and claims', async () => {
+            await assertFails(write(actor, 'teamData/tB/attendance/EmpB/2024-06-01', true));
+            await assertFails(write(actor, 'teamData/tB/leaves/EmpB/2024-06-01', 'leave'));
+            await assertFails(write(actor, 'teamData/tB/members/EmpB/name', 'X'));
+            await assertFails(write(actor, 'teamData/tB/members/Intruder', { name: 'Intruder', order: 1 }));
+            await assertFails(write(actor, 'usersV2/empB/name', 'X'));
+            await assertFails(write(actor, 'usersV2/empB/terminated', true));
+            await assertFails(write(actor, 'usersV2/empA3', USERS.empA3));
+            await assertFails(write(actor, 'memberOwners/EmpA3', actor));
+            await assertFails(write(actor, 'memberOwners/BrandNewKey', actor));
+            await assertFails(write(actor, 'memberOwners/EmpA3', null));
+        });
+        test(actor + ': overwrite own profile with isSuperAdmin or isAdmin true', async () => {
+            await assertFails(write(actor, 'usersV2/' + actor, Object.assign({}, USERS[actor], { isSuperAdmin: true })));
+            await assertFails(write(actor, 'usersV2/' + actor, Object.assign({}, USERS[actor], { isAdmin: true })));
+        });
+    }
+    test('fresh account create-time profile with isSuperAdmin or isAdmin true fails', async () => {
+        await assertSucceeds(write('fresh1', 'memberOwners/Fresh1', 'fresh1'));
+        await assertFails(write('fresh1', 'usersV2/fresh1', profile('Fresh1', { isSuperAdmin: true })));
+        await assertFails(write('fresh1', 'usersV2/fresh1', profile('Fresh1', { isAdmin: true })));
+        await assertFails(write('fresh1', 'usersV2/fresh1', profile('Fresh1', { isSuperAdmin: true, isAdmin: true, teamId: 'tA' })));
     });
 });

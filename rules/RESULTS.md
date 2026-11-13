@@ -17,12 +17,30 @@ npm run test:rules             # firebase emulators:exec --only database ... nod
 
 ## Result
 
-- `build-rules.test.js`: 6 tests, 6 pass.
-- `database.rules.test.js` (emulator): **73 tests, 73 pass, 0 fail** (EXECUTED).
+- `build-rules.test.js`: 7 tests, 7 pass.
+- `database.rules.test.js` (emulator): **227 tests, 227 pass, 0 fail** (EXECUTED). The
+  original 73 plus 154 from hardening FEAT-001 (see below).
 - `client-flows.test.js` (emulator; the real `secure-flows.js` / `data-paths.js` client
   writes run as each role against these rules): **16 tests, 16 pass** (EXECUTED).
   Auth is a local stub there (uids only); Firebase Auth itself is not emulated.
-- Expanded `database.rules.json` size: **25,870 bytes**.
+- Expanded `database.rules.json` size: **29,350 bytes** (25,870 before FEAT-001).
+
+## Hardening FEAT-001: privileged targets and Superuser self-protection
+
+- New macros `TGT(k)` (profile that owns roster key `k`, via `memberOwners`) and `ORD(k)`
+  (key is unregistered, or its owner has none of `isAdmin`, `isManager`, `isSuperAdmin`).
+  `ADMIN_OF` now also requires the target's `isAdmin` and `isManager` to be not true.
+- A team Admin can no longer terminate, restore, demote, rename (profile or roster),
+  force-reset, request a reset for, reorder, delete, or write attendance/leaves of an Admin,
+  Manager, Admin+Manager or the Superuser. Only the Superuser can.
+- The Superuser cannot terminate, demote (`isAdmin`), rename or delete their own profile
+  or roster entry, nor set their own roster `terminated` true. `isSuperAdmin` stays
+  `.write: false` for everyone.
+- Fallback: **none needed**. The `ORD($memberKey)` guard on `attendance` and `leaves`
+  (two extra lookups) was accepted by the emulator with no lookup-limit error.
+- `client-flows.test.js`: the case "Admin terminating another Admin also clears isAdmin"
+  is now "only the Superuser can terminate an Admin": the Admin payload is denied and the
+  same payload from the Superuser succeeds and clears `isAdmin`. Count unchanged (16).
 
 ## Lookup-limit acceptance gate (design 2.1)
 

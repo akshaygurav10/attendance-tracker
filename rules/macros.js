@@ -35,7 +35,13 @@ const macros = {
     },
     ADMIN_OF: {
         params: 1,
-        body: "(SI && ME.child('isAdmin').val() === true && ME.child('teamId').exists() && ME.child('teamId').val() === root.child('usersV2').child({0}).child('teamId').val() && root.child('usersV2').child({0}).child('isSuperAdmin').val() !== true && auth.uid !== {0})"
+        body: "(SI && ME.child('isAdmin').val() === true && ME.child('teamId').exists() && ME.child('teamId').val() === root.child('usersV2').child({0}).child('teamId').val() && root.child('usersV2').child({0}).child('isSuperAdmin').val() !== true && root.child('usersV2').child({0}).child('isAdmin').val() !== true && root.child('usersV2').child({0}).child('isManager').val() !== true && auth.uid !== {0})"
+    },
+    // Roster key -> target profile, and "ordinary target" (unregistered or no privileged flag).
+    TGT: { params: 1, body: "root.child('usersV2').child(root.child('memberOwners').child({0}).val())" },
+    ORD: {
+        params: 1,
+        body: "(!root.child('memberOwners').child({0}).exists() || (TGT({0}).child('isAdmin').val() !== true && TGT({0}).child('isManager').val() !== true && TGT({0}).child('isSuperAdmin').val() !== true))"
     },
     // Raw rule text (not JSON-escaped; the builder works on parsed strings).
     // Test-gated fallback applied (design 7.1, rules/RESULTS.md): the emulator
