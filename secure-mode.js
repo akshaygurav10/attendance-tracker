@@ -8,14 +8,19 @@
 // ADMIN_MEMBERS, MANAGERS, TEAMS, MEMBER_TEAMS, helpers).
 // ==========================================
 /* global firebase, database, firebaseAuth, AuthHelpers, DataPaths, SecureFlows,
-   TEAM_MEMBERS, ADMIN_MEMBERS, MANAGERS, TEAMS, MEMBER_TEAMS, SUPER_ADMIN,
-   escapeHtml, denyAction, canAdminTeamId, canAdminMember, getAdminScopeMembers,
-   isSuperUser, nameKey */
+   AppPermissions, TEAM_MEMBERS, ADMIN_MEMBERS, MANAGERS, TEAMS, MEMBER_TEAMS,
+   escapeHtml, denyAction, nameKey */
+// Permission results here are computed from private state that refresh() copies
+// from the server data. They never read localStorage, sessionStorage, the DOM
+// or the globals TEAM_MEMBERS / ADMIN_MEMBERS / MANAGERS / MEMBER_TEAMS, which
+// the page (and a console user) can overwrite. The exported object is frozen
+// and exposes no mutable state.
 const SecureMode = (function () {
     'use strict';
     const H = AuthHelpers;
     const D = DataPaths;
     const F = SecureFlows;
+    const AP = AppPermissions;
 
     const S = {
         app: null,
@@ -25,6 +30,8 @@ const SecureMode = (function () {
         roster: {},
         terminated: [],
         profiles: {},
+        members: [],
+        memberTeams: {},
         settings: {},
         planKey: '',
         fallback: false,
@@ -70,7 +77,7 @@ const SecureMode = (function () {
     function memberTeamId(name) {
         if (!name) return null;
         if (S.profile && name === S.profile.name) return S.profile.teamId || null;
-        return (MEMBER_TEAMS && MEMBER_TEAMS[nameKey(name)]) || null;
+        return S.memberTeams[String(name).replace(/\./g, '___DOT___')] || null;
     }
     function canSelfAssign() { return D.canSelfAssignTeam(S.profile); }
     function adminCanEditHolidays() { return S.settings.adminCanEditHolidays === true; }
@@ -82,6 +89,65 @@ const SecureMode = (function () {
         return null;
     }
     function hasAccount(name) { const r = rosterFor(name); return !!(r && r.uid); }
+
+    // ---------- permissions (private state only) ----------
+
+    // Profile-like description of a member for AppPermissions. A registered
+    // member whose profile is not loaded yet is treated as privileged (fail closed).
+    function targetOf(name) {
+        if (!name || !S.profile) return null;
+        if (name === S.profile.name) {
+            return { name, teamId: S.profile.teamId, isAdmin: S.profile.isAdmin === true,
+                isManager: S.profile.isManager === true, isSuperAdmin: S.profile.isSuperAdmin === true };
+        }
+        const r = S.roster[name] || S.terminated.find(e => e.name === name) || null;
+        if (!r) return null;
+        const p = r.uid ? S.profiles[r.uid] : null;
+        const unknown = !!(r.uid && !p);
+        return {
+            name,
+            teamId: r.teamId,
+            isAdmin: unknown || !!(p && p.isAdmin === true),
+            isManager: unknown || !!(p && p.isManager === true),
+            isSuperAdmin: !!(p && p.isSuperAdmin === true)
+        };
+    }
+    function ctxOf(name, target) {
+        return { isSelf: !!(S.profile && name === S.profile.name), targetTeamId: target ? target.teamId : undefined };
+    }
+    function check(fn, name) {
+        const t = targetOf(name);
+        return !!t && fn(S.profile, t, ctxOf(name, t));
+    }
+    function canAdminMember(name) { return check(AP.canAdminMember, name); }
+    function canReorder(name) { return check(AP.canReorder, name); }
+    function memberIsSuper(name) { const t = targetOf(name); return !!(t && t.isSuperAdmin); }
+    function memberIsPrivileged(name) { const t = targetOf(name); return !!(t && AP.isPrivilegedProfile(t)); }
+    // Clear refusal text for a management action, or null when allowed.
+    function denyText(action, name) {
+        const t = targetOf(name);
+        if (!t || !S.profile) return AP.MESSAGES.MSG_TEAM_ONLY;
+        const allowed = AP[action](S.profile, t, ctxOf(name, t));
+        return AP.denyReason(S.profile, t, ctxOf(name, t), allowed);
+    }
+    function scopeMembers() {
+        if (!S.profile || !isAdminUser()) return [];
+        if (isSuper()) return S.members.slice();
+        // Team Admin: self plus the own team. Management actions on Admins and
+        // Managers of that team are still refused per member (canAdminMember).
+        const mine = S.profile.teamId || null;
+        return S.members.filter(m => m === S.profile.name || (!!mine && memberTeamId(m) === mine));
+    }
+    function allMembers() { return S.members.slice(); }
+    // Read-only copy for diagnostics and tests; the live state is never exposed.
+    function snapshot() {
+        const copy = JSON.parse(JSON.stringify({
+            uid: S.uid, profile: S.profile, store: S.store, roster: S.roster, terminated: S.terminated,
+            profiles: S.profiles, members: S.members, memberTeams: S.memberTeams, settings: S.settings,
+            planKey: S.planKey, fallback: S.fallback, deniedRetry: S.deniedRetry
+        }));
+        return copy;
+    }
 
     // ---------- listeners ----------
 
@@ -183,6 +249,8 @@ const SecureMode = (function () {
         S.roster = a.roster;
         S.terminated = a.terminated;
         S.profiles = a.profiles;
+        S.members = a.teamMembers.slice();
+        S.memberTeams = Object.assign({}, a.memberTeams);
         S.settings = a.settings;
         data.data = { attendance: a.attendance, leaves: a.leaves, holidays: a.holidays, lastUpdated: new Date().toISOString() };
         const toggle = el('toggleVisibility');
@@ -320,6 +388,8 @@ const SecureMode = (function () {
         S.roster = {};
         S.terminated = [];
         S.profiles = {};
+        S.members = [];
+        S.memberTeams = {};
         S.settings = {};
         S.planKey = '';
         S.perUid = {};
@@ -468,10 +538,8 @@ const SecureMode = (function () {
 
     // Admin/Superuser: "Request password reset" (design 4.5).
     async function requestReset(member) {
-        if (!isAdminUser() || !canAdminMember(member)) {
-            alert('You can only request password resets for members of your own team.');
-            return;
-        }
+        const why = isAdminUser() ? denyText('canForceReset', member) : AP.MESSAGES.MSG_TEAM_ONLY;
+        if (why) { denyAction(why); return; }
         const r = rosterFor(member);
         if (!r || !r.uid) { alert(`"${member}" has not registered yet.`); return; }
         try {
@@ -486,7 +554,8 @@ const SecureMode = (function () {
     function renderTerminatedSection() {
         const section = el('terminatedSection');
         if (!section) return;
-        const list = S.terminated.filter(e => canAdminTeamId(e.teamId === D.UNASSIGNED ? null : e.teamId)).map(e => e.name);
+        // Team Admins never see terminated Admins or Managers; only the Superuser restores them.
+        const list = S.terminated.filter(e => isAdminUser() && !denyText('canRestore', e.name)).map(e => e.name);
         if (list.length === 0) return;
         section.innerHTML = `
             <h4 class="terminated-header">🚫 Terminated Members (${list.length})</h4>
@@ -604,6 +673,12 @@ const SecureMode = (function () {
     }
 
     function setRole(app, member, field, value) {
+        if (!isSuper()) { denyAction(AP.MESSAGES.MSG_SUPER_ONLY); return false; }
+        if (memberIsSuper(member)) {
+            denyAction(AP.MESSAGES.MSG_SUPER_PROTECTED);
+            app.renderTeamManagement();
+            return false;
+        }
         const r = rosterFor(member);
         if (!r || !r.uid) {
             alert(`"${member}" has not registered yet. Roles can be set after they register.`);
@@ -646,7 +721,7 @@ const SecureMode = (function () {
         name = H.cleanName(name);
         const err = H.validateName(name);
         if (err) { alert('⚠️ ' + err); return; }
-        if (TEAM_MEMBERS.includes(name) || name === SUPER_ADMIN) { alert('⚠️ This member already exists!'); return; }
+        if (S.members.includes(name) || memberIsSuper(name)) { alert('⚠️ This member already exists!'); return; }
         const term = S.terminated.find(e => e.name === name);
         if (term) {
             if (confirm(`"${name}" is a terminated member. Do you want to restore them instead?`)) await app.restoreMember(name);
@@ -674,8 +749,10 @@ const SecureMode = (function () {
         if (!r) return;
         const err = H.validateName(newName);
         if (err) { alert('⚠️ ' + err); return; }
-        // Rules let only the Superuser (or an Admin of another member's team) change a profile name.
-        if (r.uid && r.uid === S.uid && !isSuper()) { alert('⚠️ Only the Superuser can change your own name.'); return; }
+        // The Superuser's own account is protected; team Admins cannot rename Admins or Managers;
+        // nobody else renames themselves (rules allow only the Superuser to rename others).
+        const why = denyText('canRename', oldName);
+        if (why) { denyAction(why); return; }
         const u = {};
         u[D.paths.member(r.teamId, r.key) + '/name'] = newName;
         if (r.uid) u['usersV2/' + r.uid + '/name'] = newName;
@@ -686,6 +763,8 @@ const SecureMode = (function () {
     function removeMember(app, name) {
         const r = rosterFor(name);
         if (!r) return;
+        const why = denyText('canTerminate', name);
+        if (why) { denyAction(why); return; }
         const prof = r.uid ? S.profiles[r.uid] : null;
         update(D.terminatePayload(r, prof, new Date().toISOString()));
         if (app.selectedMember === name) app.selectedMember = currentUserName() || '';
@@ -697,10 +776,8 @@ const SecureMode = (function () {
     async function restoreMember(app, name) {
         const r = S.terminated.find(e => e.name === name) || rosterFor(name);
         if (!r) return;
-        if (!canAdminTeamId(r.teamId === D.UNASSIGNED ? null : r.teamId)) {
-            denyAction('You can only restore members of your own team.');
-            return;
-        }
+        const why = isAdminUser() ? denyText('canRestore', name) : AP.MESSAGES.MSG_TEAM_ONLY;
+        if (why) { denyAction(why); return; }
         try {
             await database.ref().update(D.restorePayload(r));
         } catch (e) {
@@ -717,7 +794,11 @@ const SecureMode = (function () {
 
     // Reorder writes `order` for every member in the actor's scope.
     function reorderMembers(dragged, target) {
-        const scope = getAdminScopeMembers();
+        if (!canReorder(dragged) || !canReorder(target)) {
+            denyAction(denyText('canReorder', dragged) || denyText('canReorder', target) || AP.MESSAGES.MSG_TEAM_ONLY);
+            return false;
+        }
+        const scope = scopeMembers().filter(canReorder);
         const from = scope.indexOf(dragged);
         const to = scope.indexOf(target);
         if (from < 0 || to < 0) return false;
@@ -733,15 +814,16 @@ const SecureMode = (function () {
         return true;
     }
 
-    return {
-        state: S,
+    return Object.freeze({
+        snapshot,
         currentUserName, isSuper, isAdminUser, isManagerUser, memberTeamId, canSelfAssign,
-        adminCanEditHolidays, hasAccount, rosterFor,
+        adminCanEditHolidays, hasAccount, rosterFor: name => { const r = rosterFor(name); return r ? Object.assign({}, r) : null; },
+        canAdminMember, canReorder, memberIsSuper, memberIsPrivileged, denyText, scopeMembers, allMembers,
         init, unlockApp, beforeLock, loadTeamOptions, login, register,
         updateUserDisplay, updateUIPermissions, changeOwnPassword, requestReset,
         renderTerminatedSection, startListeners,
         markAttendance, markLeave, removeLeave, addHoliday, removeHoliday, importJSON,
         setRole, createTeam, renameTeam, deleteTeam, assignTeam,
         addMember, editMember, removeMember, restoreMember, reorderMembers
-    };
+    });
 })();

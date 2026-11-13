@@ -44,7 +44,29 @@ const REQUIRED_PERCENTAGE = 60;
 // USER / PERMISSIONS / AUTH
 // ==========================================
 
-const SUPER_ADMIN = "Akshay Gurav"; // Cannot be removed as admin
+// Legacy mode only: the Superuser is the one users/* record with isSuperAdmin === true.
+// Held in memory (never persisted) and filled by loadLegacySuper(); until then nobody is
+// the Superuser (fails closed). Secure mode takes this from the signed-in usersV2 profile.
+let LEGACY_SUPER_NAME = null;
+
+async function loadLegacySuper(knownUsers) {
+    if (MODE === 'secure' || typeof database === 'undefined') return;
+    try {
+        const users = knownUsers || (await database.ref('users').once('value')).val() || {};
+        if (!knownUsers && !getCurrentUser()) return; // signed out while loading
+        const supers = Object.keys(users).filter(k => users[k] && users[k].isSuperAdmin === true);
+        LEGACY_SUPER_NAME = supers.length === 1 ? (users[supers[0]].name || supers[0].replace(/___DOT___/g, '.')) : null;
+    } catch (e) {
+        LEGACY_SUPER_NAME = null;
+    }
+}
+
+// Is this member the Superuser? Secure: private profile data. Legacy: loaded record.
+function memberIsSuper(name) {
+    if (!name) return false;
+    if (MODE === 'secure') return SecureMode.memberIsSuper(name);
+    return !!LEGACY_SUPER_NAME && name === LEGACY_SUPER_NAME;
+}
 
 // SHA-256 hashing using browser's Web Crypto API
 async function hashPassword(password) {
@@ -57,12 +79,8 @@ async function hashPassword(password) {
 
 function getAdminList() {
     const saved = localStorage.getItem('attendance_admin_list');
-    if (saved) {
-        const list = JSON.parse(saved);
-        if (!list.includes(SUPER_ADMIN)) list.push(SUPER_ADMIN);
-        return list;
-    }
-    return [SUPER_ADMIN];
+    if (saved) return JSON.parse(saved);
+    return [];
 }
 
 function saveAdminList(admins) {
@@ -89,7 +107,7 @@ function isAdmin() {
     if (MODE === 'secure') return SecureMode.isAdminUser();
     const user = getCurrentUser();
     if (!user) return false;
-    if (user === SUPER_ADMIN) return true;
+    if (memberIsSuper(user)) return true;
     return ADMIN_MEMBERS.includes(user);
 }
 
@@ -118,7 +136,7 @@ function escapeHtml(value) {
 
 function isSuperUser() {
     if (MODE === 'secure') return SecureMode.isSuper();
-    return getCurrentUser() === SUPER_ADMIN;
+    return memberIsSuper(getCurrentUser());
 }
 
 function isManager() {
@@ -152,7 +170,7 @@ function getMyTeamLabel() {
 /** Only ordinary users may pick their own first team; Admins/Superuser are assigned by the Superuser. */
 function canSelfAssignTeam(name, userData) {
     if (MODE === 'secure') return SecureMode.canSelfAssign(); // also excludes Managers (Q13)
-    if (!name || name === SUPER_ADMIN) return false;
+    if (!name || memberIsSuper(name) || (userData && userData.isSuperAdmin === true)) return false;
     return !(ADMIN_MEMBERS.includes(name) || (userData && userData.isAdmin));
 }
 
@@ -163,6 +181,7 @@ function isTeamAdmin() {
 // Members the current user administers (edit/manage/report).
 // Superuser: everyone. Admin: self + own team (self only when unassigned).
 function getAdminScopeMembers() {
+    if (MODE === 'secure') return SecureMode.scopeMembers(); // private roster, not TEAM_MEMBERS
     const user = getCurrentUser();
     if (!user || !isAdmin()) return [];
     if (isSuperUser()) return [...TEAM_MEMBERS];
@@ -172,10 +191,11 @@ function getAdminScopeMembers() {
 
 // May the current user administer this member? Checked by every action function.
 function canAdminMember(name) {
+    if (MODE === 'secure') return SecureMode.canAdminMember(name); // private profile data only
     const user = getCurrentUser();
     if (!name || !user) return false;
     if (isSuperUser()) return true;
-    if (name === SUPER_ADMIN) return false;
+    if (memberIsSuper(name)) return false;
     if (!isAdmin()) return false;
     if (name === user) return true;
     const myTeam = getMyTeamId();
@@ -304,6 +324,8 @@ class AttendanceData {
         if (getCurrentUser()) {
             this.loadLocal();
             this.startListeners();
+            // Legacy: learn who the Superuser is from the server record (no hardcoded name)
+            loadLegacySuper().then(() => { if (this.onDataLoaded) this.onDataLoaded(); });
         }
     }
 
@@ -788,7 +810,8 @@ class App {
         this.data.stopListeners();
         this.data.reset();
         TEAM_MEMBERS = [];
-        ADMIN_MEMBERS = [SUPER_ADMIN];
+        ADMIN_MEMBERS = [];
+        LEGACY_SUPER_NAME = null;
         TEAMS = {};
         MEMBER_TEAMS = {};
         MANAGERS = [];
@@ -981,13 +1004,6 @@ class App {
                     }
                 }
 
-                // Special case: super admin first login (no user record exists yet)
-                if (!matchedUser && (usernameInput.toLowerCase() === SUPER_ADMIN.toLowerCase() || usernameInput.toLowerCase() === generateUsername(SUPER_ADMIN))) {
-                    matchedUser = SUPER_ADMIN;
-                    sanitizedName = SUPER_ADMIN.replace(/\./g, '___DOT___');
-                    userData = null;
-                }
-
                 if (!matchedUser) {
                     errorEl.textContent = 'Username not found. Check spelling or register.';
                     return;
@@ -1001,30 +1017,15 @@ class App {
                 const storedHash = userData ? userData.passwordHash : null;
 
                 if (!storedHash) {
-                    // Super admin first-time setup
-                    if (matchedUser === SUPER_ADMIN) {
-                        const uname = await generateUniqueUsername(matchedUser);
-                        await database.ref('users/' + sanitizedName).set({
-                            name: matchedUser,
-                            passwordHash: hash,
-                            registeredAt: new Date().toISOString(),
-                            isAdmin: true,
-                            isSuperAdmin: true,
-                            terminated: false,
-                            username: uname
-                        });
-                        if (!TEAM_MEMBERS.includes(matchedUser)) {
-                            TEAM_MEMBERS.push(matchedUser);
-                            saveTeamMembers(TEAM_MEMBERS);
-                        }
-                    } else {
-                        errorEl.textContent = 'User not registered. Please register first.';
-                        return;
-                    }
+                    errorEl.textContent = 'User not registered. Please register first.';
+                    return;
                 } else if (hash !== storedHash) {
                     errorEl.textContent = 'Incorrect password.';
                     return;
                 }
+
+                // Password accepted: learn the Superuser from the server records we already read
+                await loadLegacySuper(users);
 
                 // Check if must reset password (restored user)
                 if (userData && userData.mustResetPassword === true) {
@@ -1797,9 +1798,16 @@ class App {
             const initials = member.split(' ').map(n => n[0]).join('').substring(0, 2);
             const memberIsAdmin = ADMIN_MEMBERS.includes(member);
             const memberIsManager = MANAGERS.includes(member);
-            const isSuperAdmin = member === SUPER_ADMIN;
+            const isSuperAdmin = memberIsSuper(member);
             const isSelf = member === getCurrentUser();
             const canAct = canAdminMember(member);
+            // A team Admin never gets controls for other Admins or Managers; the Superuser's own row has no Remove/Rename
+            const privilegedOther = !superUser && !isSelf &&
+                (MODE === 'secure' ? SecureMode.memberIsPrivileged(member) : (memberIsAdmin || memberIsManager || isSuperAdmin));
+            const canManage = canAct && !privilegedOther;
+            const ownSuperRow = isSelf && isSuperAdmin;
+            const canRenameRow = canManage && !ownSuperRow && (MODE !== 'secure' || !SecureMode.denyText('canRename', member));
+            const canDrag = MODE === 'secure' ? SecureMode.canReorder(member) : canManage;
             const m = escapeHtml(member);
             const teamId = getMemberTeamId(member);
             const teamName = getTeamName(teamId);
@@ -1822,17 +1830,17 @@ class App {
                     (memberIsAdmin ? `<span class="admin-tag">Admin</span>` : '');
             }
 
-            return `<div class="team-member-item" draggable="true" data-index="${i}" data-member="${m}">
+            return `<div class="team-member-item" draggable="${canDrag ? 'true' : 'false'}" data-index="${i}" data-member="${m}">
                 <div class="team-member-info">
-                    <span class="drag-handle" title="Drag to reorder">â˜°</span>
+                    <span class="drag-handle" title="Drag to reorder"${canDrag ? '' : ' style="visibility:hidden"'}>â˜°</span>
                     <span class="avatar" style="background:${AVATAR_COLORS[i % AVATAR_COLORS.length]}">${escapeHtml(initials)}</span>
                     <span class="team-member-name">${m}</span>
                     ${roleControls}
                 </div>
                 <div class="team-member-actions">
-                    ${canAct ? `<button class="btn-edit" data-member="${m}" title="Edit name">âœï¸</button>` : ''}
-                    ${canAct && !isSelf && (MODE !== 'secure' || SecureMode.hasAccount(member)) ? `<button class="btn-reset-pw" data-member="${m}" title="${MODE === 'secure' ? 'Request password reset' : 'Reset password'}">ðŸ”‘</button>` : ''}
-                    ${canAct && !isSelf && !isSuperAdmin ? `<button class="btn-delete" data-member="${m}" title="Remove">Remove</button>` : ''}
+                    ${canRenameRow ? `<button class="btn-edit" data-member="${m}" title="Edit name">âœï¸</button>` : ''}
+                    ${canManage && !isSelf && (MODE !== 'secure' || SecureMode.hasAccount(member)) ? `<button class="btn-reset-pw" data-member="${m}" title="${MODE === 'secure' ? 'Request password reset' : 'Reset password'}">ðŸ”‘</button>` : ''}
+                    ${canManage && !isSelf && !isSuperAdmin ? `<button class="btn-delete" data-member="${m}" title="Remove">Remove</button>` : ''}
                 </div>
             </div>`;
         }).join('');
@@ -1972,7 +1980,7 @@ class App {
     setAdminRole(member, makeAdmin) {
         if (!canAssignRoles()) { denyAction('Only the Superuser can assign roles.'); return false; }
         if (!member || !TEAM_MEMBERS.includes(member)) return false;
-        if (member === SUPER_ADMIN) {
+        if (memberIsSuper(member)) {
             if (!makeAdmin) alert('âš ï¸ Cannot remove the super admin.');
             return false;
         }
@@ -2155,7 +2163,7 @@ class App {
             alert('âš ï¸ This member already exists!');
             return;
         }
-        if (name === SUPER_ADMIN) {
+        if (memberIsSuper(name)) {
             alert('âš ï¸ This member already exists!');
             return;
         }
@@ -2210,9 +2218,17 @@ class App {
             alert('âš ï¸ Only admins can edit team member names.');
             return;
         }
+        if (memberIsSuper(oldName) && oldName === getCurrentUser()) {
+            denyAction('The Superuser account cannot be removed or changed.');
+            return;
+        }
         if (!canAdminMember(oldName)) {
             alert('âš ï¸ You can only edit members of your own team.');
             return;
+        }
+        if (MODE === 'secure') {
+            const why = SecureMode.denyText('canRename', oldName);
+            if (why) { denyAction(why); return; }
         }
         const newName = prompt(`Edit name for "${oldName}":`, oldName);
         if (!newName || newName.trim() === '' || newName.trim() === oldName) return;
@@ -2250,13 +2266,17 @@ class App {
             alert('âš ï¸ Only admins can remove team members.');
             return;
         }
-        if (name === SUPER_ADMIN) {
+        if (memberIsSuper(name)) {
             alert('âš ï¸ Cannot remove the super admin.');
             return;
         }
         if (!canAdminMember(name)) {
             alert('âš ï¸ You can only remove members of your own team.');
             return;
+        }
+        if (MODE === 'secure') {
+            const why = SecureMode.denyText('canTerminate', name);
+            if (why) { denyAction(why); return; }
         }
         if (name === getCurrentUser()) {
             alert('âš ï¸ You cannot remove yourself.');

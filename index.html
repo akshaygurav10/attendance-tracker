@@ -212,7 +212,7 @@
                 <div id="loginForm">
                     <div class="auth-field">
                         <label>Username</label>
-                        <input type="text" id="loginUsername" class="auth-input" placeholder="Enter your username (e.g., agurav)">
+                        <input type="text" id="loginUsername" class="auth-input" placeholder="Enter your username (e.g., jdoe)">
                     </div>
                     <div class="auth-field">
                         <label>Password</label>
@@ -265,7 +265,6 @@
                 <!-- Forgot Password Form -->
                 <div id="forgotForm" style="display:none;">
                     <p style="color:var(--text-secondary);margin-bottom:12px;">Contact your admin to reset your password.</p>
-                    <p style="color:var(--text-secondary);font-size:12px;">Admin: ${SUPER_ADMIN}</p>
                     <button class="btn-primary auth-btn" id="btnBackToLogin">← Back to Login</button>
                 </div>
             </div>
@@ -282,6 +281,7 @@
     <script src="auth-helpers.js"></script>
     <script src="data-paths.js"></script>
     <script src="secure-flows.js"></script>
+    <script src="permissions.js"></script>
     <script src="secure-mode.js"></script>
     <script src="app.js"></script>
 </body>
