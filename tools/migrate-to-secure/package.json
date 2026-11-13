@@ -1,0 +1,16 @@
+{
+  "name": "migrate-to-secure",
+  "version": "1.0.0",
+  "private": true,
+  "description": "One-way, add-only migration of the legacy attendance data into the secure per-team structure (run locally by the Superuser)",
+  "main": "migrate.js",
+  "scripts": {
+    "test": "node --test \"test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "firebase-admin": "14.5.1"
+  }
+}
