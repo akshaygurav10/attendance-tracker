@@ -19,6 +19,11 @@ const firebaseConfig = {
 // FUTURE-ENHANCEMENTS.md runbook). Any other value is treated as "legacy".
 const SECURITY_MODE = "legacy";
 
+// Optional App Check (reCAPTCHA v3) site key. This is a PUBLIC key, safe to ship.
+// Empty (default) = App Check is not loaded. See DEPLOYMENT.md "Optional hardening"
+// for registering the site and enforcing it. It is not a substitute for the rules.
+const APP_CHECK_SITE_KEY = "";
+
 // Initialize Firebase
 const app = firebase.initializeApp(firebaseConfig);
 const database = firebase.database(app);
