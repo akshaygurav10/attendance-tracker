@@ -127,7 +127,7 @@ A real-time team attendance tracking application with a Jira-style dark/light UI
 - Deleting a team makes its members Unassigned; no users or attendance are deleted
 - When "Everyone sees everyone's data" is on, non-admins see only their own team. Only the Super Admin can change this toggle
 
-> Permission checks run in the browser. Without Firebase Authentication and matching database rules they do not stop someone calling Firebase directly. See *Recommended security rules* in DEPLOYMENT.md.
+> In legacy mode (the current default) permission checks run in the browser only and do not stop someone calling Firebase directly. Secure mode moves enforcement to Firebase Auth and database rules; see *Secure mode* below and the runbook in FUTURE-ENHANCEMENTS.md.
 
 ### Permission Matrix
 
@@ -299,14 +299,40 @@ Need to Attend = Required (60% of Working Days) - Days Attended
 Firebase config is stored in `firebase-config.js`. See that file for the full configuration object. These keys are safe in client-side code — access is restricted by Firebase database rules, not API keys.
 
 ### Database Rules
-```json
-{
-  "rules": {
-    ".read": "now < 1787250600000",
-    ".write": "now < 1787250600000"
-  }
-}
-```
+The rules deployed on the live project are not recorded here and must be checked in the Firebase console. The rule set for secure mode is `database.rules.json` (built from `rules/database.rules.src.json`, tested on the emulator, see `rules/RESULTS.md`). It is deployed only during the cutover runbook in `FUTURE-ENHANCEMENTS.md`; see *Secure mode* below and `DEPLOYMENT.md`.
+
+## Secure mode (server-side team isolation)
+
+`firebase-config.js` has `const SECURITY_MODE = "legacy";`. Legacy mode is the app as described above. Setting exactly `"secure"` (after the migration and the rules deploy) switches to:
+
+- **Login with Firebase Auth** (Email/Password). The account email is `username@attendance.local`; users still type their username or full name. Remember me keeps the session; no password is stored in the browser. Minimum password length 6.
+- **Registration in four steps**: create the Auth account, claim the name (`memberOwners/{memberKey}`), create the profile (`usersV2/{uid}`, never with Admin/Manager/Superuser flags), then the roster entry. Any failure rolls back.
+- **Per-team data**: `teamData/{teamId}/members|attendance|leaves/{memberKey}` (`unassigned` for users without a team), `holidays/{date}`, `teamNames/{teamId}` (the only node readable before login), `passwordResetRequests/{uid}`.
+- **The server enforces access** (`database.rules.json`): an Admin or Manager can read only their own team; an Employee reads only their own data unless the Superuser turns on "everyone sees everyone" (own team only); unassigned users see only themselves; terminated users see nothing; nobody can give themselves a role; only the Superuser writes teams, roles and settings. Editing localStorage or JavaScript in dev tools no longer changes what Firebase allows.
+- **Password resets** go through the Superuser: the Admin button writes a request, and the Superuser runs `node tools/migrate-to-secure/migrate.js reset-password --pending` locally (free Admin SDK, no server).
+- Holidays editing by Admins follows `settings/adminCanEditHolidays` (absent means Superuser only).
+
+Code layout: `app.js` uses only the `MODE` constant and calls into `secure-mode.js` behind `MODE === 'secure'` guards, so legacy mode runs the original code. `auth-helpers.js`, `data-paths.js` and `secure-flows.js` are pure modules with unit tests in `tools/tests`. The migration tool is in `tools/migrate-to-secure` (README there).
+
+Permission matrix enforced by the rules (design section 6):
+
+| Action | Superuser | Admin (own team) | Manager (own team) | Employee | Unassigned | Not signed in |
+|---|---|---|---|---|---|---|
+| Read team names | yes | yes | yes | yes | yes | yes |
+| Read teams, holidays, settings | yes | yes | yes | yes | yes | no |
+| Read own data | yes | yes | yes | yes | yes | no |
+| Read team data | all teams | own team | own team | own team only if the toggle is on | no | no |
+| Write own attendance/leaves | yes | yes | yes | yes | yes | no |
+| Write others' attendance/leaves | all | own team | no | no | no | no |
+| Roster add/remove/rename/reorder | all | own team | no | no | no | no |
+| Terminate / restore | all | own team, not the Superuser, not self | no | no | no | no |
+| Set roles, move members, teams, settings | yes | no | no | no | no | no |
+| Holidays | yes | only if `adminCanEditHolidays` | no | no | no | no |
+| Request password reset | yes | own team | no | no | no | no |
+| First team pick at login | n/a | no | no (waits for the Superuser) | n/a | yes | no |
+| Legacy nodes (`appData`, `users`, ...) | no | no | no | no | no | no |
+
+Known differences from legacy mode are listed in `FUTURE-ENHANCEMENTS.md` ("What users will notice after cutover").
 
 ---
 
@@ -390,38 +416,12 @@ Summary of behavior is in *User Roles* and the *Permission Matrix* above; requir
 5. As Admin (not Super Admin): no team or role controls. As Employee: only self (or own team with the toggle on).
 6. Log in as an existing user with no team: shows "No team", sees only self.
 
-### Recommended Firebase security rules (NOT deployed, NOT active)
+### Firebase security rules
 
-> ⚠️ **Client-side checks alone are not secure.** The live database rules are open and there is no Firebase Authentication. Anyone with the Firebase config can read or write any path directly, and `appData` is a single blob every client downloads, so Manager/team scoping only stops honest use. The snippet below is a design target: it needs Firebase Auth with custom claims and a per-member split of attendance data (`attendanceByMember` does not exist yet). It has not been applied to this project. Full notes are in DEPLOYMENT.md.
-
-```json
-{
-  "rules": {
-    "teams": { ".read": true, "$teamId": { ".write": "auth.token.superuser === true" } },
-    "memberTeams": { ".read": "auth != null", ".write": "auth.token.superuser === true" },
-    "managers": { ".read": "auth != null", ".write": "auth.token.superuser === true" },
-    "admins": { ".read": "auth != null", ".write": "auth.token.superuser === true" },
-    "users": {
-      "$memberKey": {
-        ".read": "auth.token.superuser === true || auth.token.name === $memberKey",
-        "teamId":    { ".write": "auth.token.superuser === true" },
-        "isManager": { ".write": "auth.token.superuser === true" },
-        "isAdmin":   { ".write": "auth.token.superuser === true" }
-      }
-    },
-    "attendanceByMember": {
-      "$memberKey": {
-        ".read": "auth.token.superuser === true || auth.token.name === $memberKey || ((auth.token.manager === true || auth.token.admin === true) && data.child('teamId').val() === auth.token.teamId)",
-        ".write": "auth.token.superuser === true || auth.token.name === $memberKey || (auth.token.admin === true && data.child('teamId').val() === auth.token.teamId)"
-      }
-    },
-    "holidays": { ".read": "auth != null", ".write": "auth.token.superuser === true" }
-  }
-}
-```
+In legacy mode (current default) the checks above are client-side only: the live rules are not known to be restrictive, there is no Firebase Authentication, and `appData` is one blob every client downloads, so team scoping only stops honest use. The earlier custom-claims snippet that used to be here was a design sketch and has been replaced by the real rule set for secure mode, `database.rules.json` (no custom claims; free Spark plan). See *Secure mode* above, `rules/RESULTS.md` for the emulator results, and the cutover runbook in FUTURE-ENHANCEMENTS.md.
 
 ### Known limitations (non-blocking review findings)
-- All enforcement is client-side against an open database (above). **Firebase rules are NOT deployed.** Admin team scoping is client-side only: with one `appData` blob keyed by member name, rules cannot allow reading one team's members and hide another's without restructuring (for example `attendanceByTeam/{teamId}/{member}`) plus Firebase Auth.
+- Legacy mode: all enforcement is client-side (above); secure mode fixes this once the runbook is completed. Admin team scoping is client-side only: with one `appData` blob keyed by member name, rules cannot allow reading one team's members and hide another's without restructuring (for example `attendanceByTeam/{teamId}/{member}`) plus Firebase Auth.
 - A Manager/Admin flag set on a name that has not registered yet applies to whoever registers that name first. Register users before flagging them.
 - Renaming a member does not migrate their team, Manager flag or `users` record, so they show as Unassigned afterwards.
 - If `SUPER_ADMIN` is not yet registered, anyone can register that name (pre-existing).

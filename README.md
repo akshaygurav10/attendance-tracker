@@ -51,7 +51,11 @@ A real-time team attendance tracking app with role-based access, Firebase sync, 
 | **Admin + Manager** | Union of both, within their own team only |
 | **Super Admin** | Global: all teams. + Create/rename/delete teams, assign teams, grant Manager/Admin, Holidays, visibility toggle, import; cannot be removed |
 
-Users choose a team when registering. Existing users without a team show as "Unassigned" until the Super Admin assigns one. An Admin with no team sees only themselves until the Super Admin assigns one. Role and team checks are client-side only and **Firebase rules are NOT deployed**, so anyone with the Firebase config can still read all data directly; see [DEPLOYMENT.md](DEPLOYMENT.md). Open question: should team Admins edit the global holidays? (Default no; one-line flag in `app.js`.)
+Users choose a team when registering. Existing users without a team show as "Unassigned" until the Super Admin assigns one. An Admin with no team sees only themselves until the Super Admin assigns one. In the current (legacy) mode, role and team checks are client-side only, so anyone with the Firebase config can still read all data directly; see [DEPLOYMENT.md](DEPLOYMENT.md). Open question: should team Admins edit the global holidays? (Default no; one-line flag in `app.js`.)
+
+## Security mode
+
+`firebase-config.js` sets `SECURITY_MODE = "legacy"` (default, behaves as before). The code for a secure mode is in place: Firebase Auth login, data split per team, and `database.rules.json` so Firebase itself enforces who can see which team. It stays off until the Superuser runs the migration and deploys the rules, following the runbook in [FUTURE-ENHANCEMENTS.md](FUTURE-ENHANCEMENTS.md). Free Firebase Spark plan only; no Cloud Functions.
 
 ## Tech Stack
 
@@ -66,7 +70,11 @@ Users choose a team when registering. Existing users without a team show as "Una
 ├── index.html          — Main page
 ├── app.js              — Application logic
 ├── styles.css          — Styling
-├── firebase-config.js  — Firebase config
+├── firebase-config.js  — Firebase config and SECURITY_MODE flag
+├── auth-helpers.js, data-paths.js, secure-flows.js, secure-mode.js — secure mode (inactive in legacy)
+├── database.rules.json — rules for secure mode (built from rules/, not deployed)
+├── rules/              — rules source, build and emulator tests
+├── tools/              — unit tests and the migrate-to-secure script
 ├── DEPLOYMENT.md       — Deployment guide
 ├── DOCUMENTATION.md    — Full documentation
 └── README.md           — This file

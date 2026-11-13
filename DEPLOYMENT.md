@@ -39,16 +39,43 @@ All data is stored in **Firebase Realtime Database**. The app connects automatic
 - **Database URL:** `https://attendance-tracker-dca2b-default-rtdb.asia-southeast1.firebasedatabase.app`
 - **Region:** Asia Southeast 1
 
-### Database Rules (current)
-```json
-{
-  "rules": {
-    ".read": "now < 1787250600000",
-    ".write": "now < 1787250600000"
-  }
-}
+### Database rules and security mode
+
+The app has two modes, set by one line in `firebase-config.js`:
+
+| `SECURITY_MODE` | What runs |
+|---|---|
+| `"legacy"` (default) | The original app: own login, data in `appData` and the other legacy nodes. All permission checks are in the browser only. |
+| `"secure"` | Firebase Auth (Email/Password) login, per-team data under `teamData/{teamId}`, and `database.rules.json` enforcing access on the server. |
+
+**Currently deployed rules: unknown.** This file used to say the rules were open until a fixed date in August 2026; that date has passed and nobody has re-checked the console. Before changing anything, open Firebase Console → Realtime Database → Rules and copy what is there (runbook step R1).
+
+`database.rules.json` (repo root) is the rule set for secure mode. It is **not deployed** by anything in this repo. Deploy it only at runbook step R9, after the migration and the final sync, because it denies every legacy path (`appData`, `users`, `teamMembers`, ...). Deploying it while the app still runs in legacy mode locks everyone out.
+
+How the rules file is produced and checked:
+
 ```
-> ⚠️ These rules expire on **August 21, 2026**. After that date, update them in Firebase Console → Realtime Database → Rules tab.
+cd rules
+npm install
+node build-rules.js          # expands rules/database.rules.src.json -> ../database.rules.json
+npm run test:rules           # Database emulator tests (needs Java)
+```
+
+How to deploy it at R9 (either way):
+
+- Console: Realtime Database → Rules → paste the contents of `database.rules.json` → Publish.
+- CLI: `firebase deploy --only database` from a Firebase project directory whose `firebase.json` points `database.rules` at this file.
+
+Rollback: paste the rules copied at R1 back into the Rules tab, set `SECURITY_MODE = "legacy"`, publish. Legacy data is never modified by the migration, so the legacy app keeps working.
+
+What secure mode needs in the console (all on the free Spark plan; no Cloud Functions, no paid features):
+
+1. Authentication → Sign-in method → enable **Email/Password** (leave Email link off). Accounts use a non-routable `username@attendance.local` address; no email is ever sent.
+2. Project settings → Service accounts → generate a key for the local migration script (`tools/migrate-to-secure`). Keep it outside the repo.
+
+Residual risks in secure mode (see `DESIGN-server-side-isolation.md` section 14): open registration (anyone with the config can register and pick a team), team names are public for the pre-login picker, no self-service password reset, minimum password length 6, and old password hashes stay in the `users` node until it is deleted after stabilization. Optional hardening: Firebase App Check (reCAPTCHA v3) and an API-key HTTP-referrer restriction (not a security boundary on its own).
+
+The full step-by-step cutover runbook (backup, dry run, migration, verify, rules deploy, flag flip, rollback) is in `FUTURE-ENHANCEMENTS.md` section 1.
 
 ### What's stored in Firebase
 | Node | Content |
@@ -64,56 +91,18 @@ All data is stored in **Firebase Realtime Database**. The app connects automatic
 
 Teams, Manager and Admin flags are written only by the Superuser's UI. Existing data needs no migration: users with no `teamId` show as "Unassigned".
 
-### Recommended security rules (NOT deployed, NOT active)
 
-> ⚠️ **Firebase rules are NOT deployed. Client-side checks alone are not secure.** The current rules are open, there is no Firebase Authentication, and `appData` is one blob that every client downloads. Anyone with the Firebase config can read or write any path directly, so the Manager/Admin/team restrictions in the UI only stop honest use. Nothing below has been applied to this project.
+Secure mode adds these nodes (the legacy nodes above stay untouched until they are deleted after stabilization):
 
-Real enforcement needs (1) Firebase Authentication, with custom claims set by a trusted backend (`superuser: true`, `admin: true`, `manager: true`, `teamId: "<id>"`), and (2) splitting `appData` so attendance is stored per member (for example `attendance/{memberKey}` with a `teamId` field), because rules cannot filter inside a single blob. A starting point once those exist:
-
-```json
-{
-  "rules": {
-    "teams": {
-      ".read": true,
-      "$teamId": { ".write": "auth.token.superuser === true" }
-    },
-    "memberTeams": {
-      ".read": "auth != null",
-      ".write": "auth.token.superuser === true"
-    },
-    "managers": {
-      ".read": "auth != null",
-      ".write": "auth.token.superuser === true"
-    },
-    "admins": {
-      ".read": "auth != null",
-      ".write": "auth.token.superuser === true"
-    },
-    "users": {
-      "$memberKey": {
-        ".read": "auth.token.superuser === true || auth.token.name === $memberKey",
-        "teamId":    { ".write": "auth.token.superuser === true" },
-        "isManager": { ".write": "auth.token.superuser === true" },
-        "isAdmin":   { ".write": "auth.token.superuser === true" }
-      }
-    },
-    "attendanceByMember": {
-      "$memberKey": {
-        ".read": "auth.token.superuser === true || auth.token.name === $memberKey || ((auth.token.manager === true || auth.token.admin === true) && data.child('teamId').val() === auth.token.teamId)",
-        ".write": "auth.token.superuser === true || auth.token.name === $memberKey || (auth.token.admin === true && data.child('teamId').val() === auth.token.teamId)"
-      }
-    },
-    "holidays": {
-      ".read": "auth != null",
-      ".write": "auth.token.superuser === true"
-    }
-  }
-}
-```
-
-Admin team scope: the snippet above limits Admin reads and writes to the Admin's own `teamId` (like the Manager clause) and keeps holidays Superuser-only. The current single `appData` blob keyed by member name cannot express that, so the app's Admin team scoping is **client-side only** until attendance is restructured per team (for example `attendanceByTeam/{teamId}/{member}`) and Firebase Auth is added. Suggested follow-up.
-
-Notes: `attendanceByMember` and `auth.token.*` claims do not exist in the app today; this snippet is a design target, not a drop-in replacement. If `teams` is later made non-public, the pre-login team picker will be empty. Then users should choose their team after first login (the Superuser can always assign it). Note too that a Superuser-assigned Manager flag on a name that has not registered yet will apply to whoever registers that name first. Register those users before flagging them.
+| Node | Content |
+|------|---------|
+| `usersV2/{uid}` | Profile keyed by Firebase Auth uid: name, username, memberKey, teamId, role flags, terminated. No password hash. |
+| `memberOwners/{memberKey}` | Which uid owns a name (write-once claim) |
+| `teamNames/{teamId}` | Team names only; the one public node (pre-login team picker) |
+| `teamData/{teamId}/members\|attendance\|leaves/{memberKey}` | Roster, attendance and leaves per team (`unassigned` for users without a team) |
+| `holidays/{date}` | Holiday list keyed by date |
+| `passwordResetRequests/{uid}` | Admin requests the Superuser handles with the local script |
+| `migration/cutoverAt` | Marker written by the migration script |
 
 ### Firebase Config
 The Firebase configuration is in `firebase-config.js`. This file contains the API keys and database URL needed to connect to the Firebase backend. These keys are safe to expose in client-side code (Firebase restricts access via database rules, not API keys).
@@ -157,6 +146,8 @@ The app shows a connection indicator next to "Attendance Tracker":
 | Admin resets | Resets to `Temp@123` |
 | After restore | User prompted to set new password on next login |
 | Change password | Click 🔑 in top-right (requires old password) |
+
+The table above is legacy mode. In secure mode: minimum 6 characters (Firebase Auth); the Admin's 🔑 button becomes "Request password reset" and the Superuser runs `node tools/migrate-to-secure/migrate.js reset-password --pending`, which prints a temporary password to hand over; there is no `Temp@123`; "Remember me" keeps you signed in and never stores the password.
 
 ---
 
