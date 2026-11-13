@@ -73,7 +73,11 @@ What secure mode needs in the console (all on the free Spark plan; no Cloud Func
 1. Authentication → Sign-in method → enable **Email/Password** (leave Email link off). Accounts use a non-routable `username@attendance.local` address; no email is ever sent.
 2. Project settings → Service accounts → generate a key for the local migration script (`tools/migrate-to-secure`). Keep it outside the repo.
 
-Residual risks in secure mode (see `DESIGN-server-side-isolation.md` section 14): open registration (anyone with the config can register and pick a team), team names are public for the pre-login picker, no self-service password reset, minimum password length 6, and old password hashes stay in the `users` node until it is deleted after stabilization. Optional hardening: Firebase App Check (reCAPTCHA v3) and an API-key HTTP-referrer restriction (not a security boundary on its own).
+Residual risks in secure mode (see `DESIGN-server-side-isolation.md` section 14): open registration (anyone with the config can register and pick a team), team names are public for the pre-login picker, no self-service password reset, minimum password length 6, and old password hashes stay in the `users` node until it is deleted after stabilization. Optional hardening is in `FUTURE-ENHANCEMENTS.md` ("Optional hardening after R11"): Firebase App Check (reCAPTCHA v3, `APP_CHECK_SITE_KEY` in `firebase-config.js`, empty = off), an API-key HTTP-referrer restriction for the GitHub Pages domain, and email enumeration protection. App Check raises the bar against copied or scripted clients but is not authorization; the rules are. Enforce it for Realtime Database only after the metrics look good.
+
+#### Why the code is not obfuscated
+
+Minifying or obfuscating `app.js` is not a security measure here and is deliberately not done. The browser must receive the code and the public Firebase config to run, so anyone can read, beautify or deobfuscate them, and anyone can call the database directly without the page at all. What protects the data is the signed-in Firebase Auth uid checked by `database.rules.json` on Firebase's servers. Obfuscation would only make the code harder to maintain and review. See the FAQ "Can someone override this from dev tools?" in `DOCUMENTATION.md`.
 
 The full step-by-step cutover runbook (backup, dry run, migration, verify, rules deploy, flag flip, rollback) is in `FUTURE-ENHANCEMENTS.md` section 1.
 
@@ -116,8 +120,8 @@ The app shows a connection indicator next to "Attendance Tracker":
 
 ## First Time Setup
 
-1. **Super Admin** (Akshay Gurav) opens the app first
-2. Login with username `agurav` or `Akshay Gurav` + set any password
+1. The **Superuser** already exists in the data: the single `isSuperAdmin: true` record (legacy `users/*`, or `usersV2` after migration). Typing a name at login never auto-registers anyone. On a fresh legacy database set `isSuperAdmin` to `true` on one `users/<name>` node by hand in the console first.
+2. The Superuser logs in with the existing username or full name and password
 3. Share the app URL with team members
 4. Each member clicks **"Register here"** → enters full name + creates password
 5. Username is auto-generated (shown after login)

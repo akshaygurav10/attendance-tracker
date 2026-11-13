@@ -159,10 +159,29 @@ Unassigned users (no team) see only themselves, whatever their flags, including 
 ## How to Use
 
 ### First Time Setup
-1. Super Admin (Akshay Gurav) opens the app
-2. Types username `agurav` or `Akshay Gurav` + any password → auto-registers
+1. The Superuser already exists in the data (see "Who is the Superuser" below). Typing a name at the login screen never creates or promotes anyone. An unknown name is rejected.
+2. The Superuser logs in with their existing username or full name and password
 3. Other team members click "Register here" → enter full name + password
 4. Username is auto-generated (e.g., "Krutik Arekar" → `karekar`)
+
+#### Who is the Superuser
+- **Secure mode:** the one profile (`usersV2/{uid}`) with `isSuperAdmin: true`. Only the Admin SDK can set it (the migration script or `migrate.js set-superuser`). No browser, including the Superuser's own, can write it.
+- **Migration:** the Superuser is named by `--superuser "<name>"` or by the single legacy `users/*` record with `isSuperAdmin === true`. If both are given they must match. The client no longer contains a Superuser name.
+- **Legacy mode:** the single `users/*` record with `isSuperAdmin === true`. That user keeps logging in with the existing password. On a fresh legacy database with no such record nobody is the Superuser until you set `isSuperAdmin` to `true` on one `users/<name>` node by hand in the Firebase console (a manual step).
+- Legacy mode stays insecure regardless: its checks run only in the browser (see the FAQ below).
+
+#### Who can do what (secure mode, enforced by the database rules)
+| Actor | Ordinary member of own team | Admin / Manager / Superuser of own team | Other team |
+|---|---|---|---|
+| Employee | own attendance and leaves | none | none |
+| Manager | read own team; write only own attendance and leaves | read only | none |
+| Team Admin | manage (mark, rename, terminate, restore, reset, reorder, remove) | **cannot** change Admins, Managers or the Superuser; can still read them | none |
+| Superuser | everything, all teams | everything except self-removal | everything |
+
+The Superuser cannot terminate, demote, rename or delete their own profile or roster entry. The full actor x target x action matrix is in `DESIGN-server-side-isolation.md`.
+
+#### FAQ: Can someone override this from dev tools?
+In secure mode, no, not the part that matters. Anyone can open dev tools, edit the page code, change `localStorage` or set variables in their own browser. That only changes what their own screen shows. Every read and write still goes to Firebase, and the database rules decide, using the signed-in Firebase Auth uid on the server. A tampered browser sending a forbidden write gets `PERMISSION_DENIED`. The app code and the Firebase web config are public by design; they are not secrets and hiding them would not help. In legacy mode the answer is yes: all checks run in the browser and the database is open to anyone with the config. Minifying or obfuscating the code is not a security measure (see `DEPLOYMENT.md`).
 
 ### Login
 1. Enter your username (e.g., `agurav`) or full name
@@ -424,7 +443,7 @@ In legacy mode (current default) the checks above are client-side only: the live
 - Legacy mode: all enforcement is client-side (above); secure mode fixes this once the runbook is completed. Admin team scoping is client-side only: with one `appData` blob keyed by member name, rules cannot allow reading one team's members and hide another's without restructuring (for example `attendanceByTeam/{teamId}/{member}`) plus Firebase Auth.
 - A Manager/Admin flag set on a name that has not registered yet applies to whoever registers that name first. Register users before flagging them.
 - Renaming a member does not migrate their team, Manager flag or `users` record, so they show as Unassigned afterwards.
-- If `SUPER_ADMIN` is not yet registered, anyone can register that name (pre-existing).
+- The client no longer hard-codes a Superuser name. In legacy mode the Superuser is the single `users/*` record with `isSuperAdmin === true`; with no such record nobody is the Superuser.
 - If `teams` is later made non-public, the pre-login team picker will be empty; assign teams from Manage Team instead.
 - Not tested against real Firebase or in a browser (role matrix was verified with a Node harness); do the manual checks above before release.
 

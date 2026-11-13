@@ -42,6 +42,17 @@ npm run test:rules             # firebase emulators:exec --only database ... nod
   is now "only the Superuser can terminate an Admin": the Admin payload is denied and the
   same payload from the Superuser succeeds and clears `isAdmin`. Count unchanged (16).
 
+## Hardening FEAT-004: re-run and what it covers
+
+- Rules were not changed by FEAT-004. Re-run at the end of hardening: `build-rules.test.js`
+  7/7; emulator `database.rules.test.js` + `client-flows.test.js` **243 tests, 243 pass, 0 fail**
+  (EXECUTED, emulator only). `node build-rules.js` leaves `database.rules.json` unchanged
+  (29,350 bytes).
+- The permission matrix for privileged targets is documented in
+  `DESIGN-server-side-isolation.md` section 6.1. App Check is a client-side extra and is not
+  part of these tests; the rules remain the only authorization.
+- Not exercised: production lookup limits, real Firebase Auth, App Check enforcement.
+
 ## Lookup-limit acceptance gate (design 2.1)
 
 The three worst cases were accepted by the emulator with no lookup-limit or size error:

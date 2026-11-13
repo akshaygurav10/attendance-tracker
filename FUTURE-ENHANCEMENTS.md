@@ -37,6 +37,20 @@ In legacy mode every permission check is in the browser. All attendance data is 
 
 **Rollback** (any time before R12): paste the R1 rules back, set `SECURITY_MODE = "legacy"`, publish, users reload. Legacy data was never modified. Before rolling back after real use, run `node migrate.js export-new --to-json <file>` to keep secure-mode edits for manual re-entry. To try again later: `node migrate.js clear-cutover --yes`, then repeat R5 to R10 (use `--mirror` in R8 only if the export shows nothing worth keeping).
 
+### Superuser identification in the migration
+
+The client no longer contains a Superuser name. `migrate.js` takes it from `--superuser "<name>"` or from the single legacy `users/*` record with `isSuperAdmin === true`. If both are present they must match. With no flag and zero or several such records it stops and says what to do. The Superuser (and every Admin and Manager) gets a random temporary password and `mustResetPassword`; after the rules deploy only the Admin SDK can set `isSuperAdmin` (`migrate.js set-superuser`). A legacy Superuser keeps logging in with the existing password until cutover. On a fresh legacy database with no `isSuperAdmin` record, set it by hand in the console first. Legacy mode stays insecure regardless; only secure mode with the deployed rules protects the data.
+
+### Optional hardening after R11 (all manual, all free on Spark)
+
+These are extra layers. The database rules are the security boundary; none of these replace them. Do them one at a time and re-test login after each.
+
+1. **App Check (reCAPTCHA v3).** Register the GitHub Pages site for reCAPTCHA v3 at https://www.google.com/recaptcha/admin to get a site key and secret key. In Firebase Console → App Check → Apps, register the web app with the reCAPTCHA provider and the secret key. Put the **site key** (public) in `APP_CHECK_SITE_KEY` in `firebase-config.js` and publish; the app then loads `firebase-app-check-compat.js` and activates it. Watch App Check metrics for Realtime Database for a few days. Only when almost all requests carry a valid token, enable enforcement for Realtime Database. Enforcing too early locks out users who still have the old page cached; unenforcing in the console is the rollback. With the key empty (default) nothing is loaded. Sources: https://firebase.google.com/docs/app-check/web/recaptcha-provider and https://firebase.google.com/docs/app-check (read for this change).
+2. **API-key HTTP-referrer restriction.** Google Cloud Console → APIs & Services → Credentials → the browser API key → Application restrictions → HTTP referrers, add the GitHub Pages origin (and `localhost` for testing). This only stops casual reuse of the key from other sites. Anyone can forge a referrer outside a browser, so it is not a security boundary.
+3. **Email enumeration protection.** Authentication → Settings → User actions. Registration picks a free username by catching `email-already-in-use`; test registration of a colliding name in staging before turning this on, as noted in R4.
+
+Cost and quota (Firebase pricing page lists App Check as no-cost, subject to the attestation provider's quotas): the Firebase App Check overview states reCAPTCHA Enterprise is free for 10,000 assessments per month. The v3 provider page does not give its own number, so check the reCAPTCHA admin console quota and the App Check metrics for this app's traffic. Pricing: https://firebase.google.com/pricing.
+
 ### What users will notice after cutover
 
 | Area | Before (legacy) | After (secure mode) |
