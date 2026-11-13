@@ -52,13 +52,21 @@ Build review verdict: APPROVED (see `build-review.md`).
 
 ## Open review items (decide before or after cutover)
 
-1. A team Admin can terminate, demote, rename or force-reset a peer Admin or Manager in the same team. Confirm intent; otherwise add an `isAdmin !== true` target check.
-2. The Superuser can terminate their own profile through the rules, which would lock them out until console recovery. Confirm the client blocks it or add `$uid !== auth.uid`.
+1. RESOLVED (0ee137f rules, c733e34 client): a team Admin can no longer terminate, restore, demote, rename, force-reset, reorder, delete or write attendance/leaves of an Admin, Manager or the Superuser. Only the Superuser can.
+2. RESOLVED (0ee137f rules, c733e34 client): the Superuser cannot terminate, demote, rename or delete their own profile or roster entry.
 3. `mustResetPassword` is enforced only in the client.
 4. `teamNames` is publicly readable (registration dropdown) and `teams`, including `createdBy`, is readable by any signed-in user.
 5. Registration is first come on a roster name, so someone can claim an unclaimed name before its owner.
 6. Anyone with the public config can still register and pick a team. Keep "everyone sees everyone" off until registration approval exists.
 7. Slices 3 to 5 and 6 to 7 were committed together.
+
+## Hardening
+
+- Rules (0ee137f): privileged-target protection and Superuser self-protection (macros `TGT`, `ORD`); emulator 243/243.
+- Client (c733e34, d86bae9, d456524): permission checks and hidden controls for privileged targets; secure-mode permissions never read localStorage or DOM; the hardcoded Superuser name is gone (legacy derives it from the `isSuperAdmin` record).
+- Migration (a85fb5f): Superuser from `--superuser` or the single legacy `isSuperAdmin` record.
+- Optional App Check (1d8232a): off while `APP_CHECK_SITE_KEY` is empty; manual enablement steps are in FUTURE-ENHANCEMENTS.md. Docs now carry the permission matrix, the "Can someone override this from dev tools?" FAQ and why obfuscation is not security. Evidence: `hardening-verification.md`.
+- Legacy mode remains insecure by design; `SECURITY_MODE` is still `"legacy"`.
 
 ## Manual steps you must do (in order, matching the runbook in FUTURE-ENHANCEMENTS.md and DEPLOYMENT.md)
 
